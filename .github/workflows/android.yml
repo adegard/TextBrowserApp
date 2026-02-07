@@ -24,3 +24,9 @@ jobs:
 
       - name: Build Debug APK
         run: gradle :app:assembleDebug
+
+      - name: Show Kotlin compiler errors
+        if: failure()
+        run: |
+          echo "=== Kotlin Compiler Problems Report ==="
+          cat app/build/reports/problems/problems-report.html || true
