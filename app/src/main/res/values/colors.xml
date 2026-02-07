@@ -1,0 +1,10 @@
+<resources>
+    <color name="colorPrimary">#2196F3</color>
+    <color name="colorPrimaryDark">#1976D2</color>
+    <color name="colorAccent">#FF9800</color>
+
+    <color name="dayBackground">#FFFFFF</color>
+    <color name="dayText">#000000</color>
+    <color name="nightBackground">#121212</color>
+    <color name="nightText">#FFFFFF</color>
+</resources>
