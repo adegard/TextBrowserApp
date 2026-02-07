@@ -53,7 +53,8 @@ class MainActivity : AppCompatActivity() {
         themeButton = findViewById(R.id.themeButton)
         exitButton = findViewById(R.id.exitButton)
 
-        gestureDetector = GestureDetectorCompat(this,
+        gestureDetector = GestureDetectorCompat(
+            this,
             object : GestureDetector.SimpleOnGestureListener() {
 
                 override fun onDown(e: MotionEvent?): Boolean {
@@ -83,6 +84,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+
 
 
         contentView.setOnTouchListener { _, event ->
