@@ -29,9 +29,14 @@ android {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
-    implementation 'androidx.core:core:1.13.1'
-    implementation 'androidx.appcompat:appcompat:1.7.0'
-    implementation 'com.google.android.material:material:1.12.0'
-    implementation 'androidx.constraintlayout:constraintlayout:2.2.0'
+
+    // Use AndroidX BOM to force consistent versions
+    implementation platform('androidx.compose:compose-bom:2024.10.00')
+
+    implementation 'androidx.core:core-ktx'
+    implementation 'androidx.appcompat:appcompat'
+    implementation 'com.google.android.material:material'
+    implementation 'androidx.constraintlayout:constraintlayout'
 }
+
 
