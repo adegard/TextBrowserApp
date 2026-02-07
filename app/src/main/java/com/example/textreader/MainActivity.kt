@@ -56,17 +56,25 @@ class MainActivity : AppCompatActivity() {
         gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
             private val SWIPE_THRESHOLD = 80
             override fun onDown(e: MotionEvent): Boolean = true
-            override fun onFling(e1: MotionEvent, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+            override fun onFling(
+                e1: MotionEvent?,
+                e2: MotionEvent?,
+                velocityX: Float,
+                velocityY: Float
+            ): Boolean {
+                if (e1 == null || e2 == null) return false
+
                 val dx = e2.x - e1.x
-                if (dx > SWIPE_THRESHOLD) {
+                if (dx > 80) {
                     previousBlock()
-                    return true
-                } else if (dx < -SWIPE_THRESHOLD) {
+                    return true            
+                } else if (dx < -80) {
                     nextBlock()
                     return true
                 }
                 return false
             }
+
         })
 
         contentView.setOnTouchListener { _, event ->
