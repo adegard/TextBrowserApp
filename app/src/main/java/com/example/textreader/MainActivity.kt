@@ -53,29 +53,37 @@ class MainActivity : AppCompatActivity() {
         themeButton = findViewById(R.id.themeButton)
         exitButton = findViewById(R.id.exitButton)
 
-        gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
-            private val SWIPE_THRESHOLD = 80
-            override fun onDown(e: MotionEvent): Boolean = true
-            override fun onFling(
-                e1: MotionEvent?,
-                e2: MotionEvent?,
-                velocityX: Float,
-                velocityY: Float
-            ): Boolean {
-                if (e1 == null || e2 == null) return false
+        gestureDetector = GestureDetectorCompat(this,
+            object : GestureDetector.SimpleOnGestureListener() {
 
-                val dx = e2.x - e1.x
-                if (dx > 80) {
-                    previousBlock()
-                    return true            
-                } else if (dx < -80) {
-                    nextBlock()
+                override fun onDown(e: MotionEvent?): Boolean {
                     return true
                 }
-                return false
-            }
 
-        })
+                override fun onFling(
+                    e1: MotionEvent?,
+                    e2: MotionEvent?,
+                    velocityX: Float,
+                    velocityY: Float
+                ): Boolean {
+                    if (e1 == null || e2 == null) return false
+
+                    val dx = e2.x - e1.x
+                    val threshold = 80
+
+                    if (dx > threshold) {
+                        previousBlock()
+                        return true
+                    } else if (dx < -threshold) {
+                        nextBlock()
+                        return true
+                    }
+
+                    return false
+                }
+            }
+        )
+
 
         contentView.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
