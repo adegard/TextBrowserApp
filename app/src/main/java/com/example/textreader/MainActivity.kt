@@ -4,18 +4,17 @@ import android.content.Context
 import android.os.Bundle
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
-import android.widget.Button
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.view.GestureDetectorCompat
-import androidx.core.view.isVisible
 import kotlin.concurrent.thread
 import java.net.HttpURLConnection
-import java.net.URLEncoder
 import java.net.URL
+import java.net.URLEncoder
 
 data class Bookmark(
     val title: String,
@@ -33,13 +32,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var themeButton: Button
     private lateinit var exitButton: Button
 
+    private lateinit var gestureDetector: GestureDetectorCompat
+
     private var blocks: List<String> = emptyList()
     private var currentBlockIndex = 0
     private var currentUrl: String? = null
     private var currentTitle: String = ""
     private var isNight = false
-
-    private lateinit var gestureDetector: GestureDetectorCompat
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,6 +52,9 @@ class MainActivity : AppCompatActivity() {
         themeButton = findViewById(R.id.themeButton)
         exitButton = findViewById(R.id.exitButton)
 
+        // ---------------------------
+        // FIXED GESTURE LISTENER
+        // ---------------------------
         gestureDetector = GestureDetectorCompat(
             this,
             object : GestureDetector.SimpleOnGestureListener() {
@@ -85,8 +87,6 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-
-
         contentView.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
             true
@@ -94,12 +94,10 @@ class MainActivity : AppCompatActivity() {
 
         goButton.setOnClickListener {
             val input = urlInput.text.toString().trim()
-            if (input.isNotEmpty()) {
-                if (input.startsWith("http://") || input.startsWith("https://")) {
-                    loadUrl(input)
-                } else {
-                    searchDuckDuckGoLite(input)
-                }
+            if (input.startsWith("http://") || input.startsWith("https://")) {
+                loadUrl(input)
+            } else {
+                searchDuckDuckGoLite(input)
             }
         }
 
@@ -132,14 +130,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun nextBlock() {
-        if (blocks.isNotEmpty() && currentBlockIndex < blocks.size - 1) {
+        if (currentBlockIndex < blocks.size - 1) {
             currentBlockIndex++
             contentView.text = blocks[currentBlockIndex]
         }
     }
 
     private fun previousBlock() {
-        if (blocks.isNotEmpty() && currentBlockIndex > 0) {
+        if (currentBlockIndex > 0) {
             currentBlockIndex--
             contentView.text = blocks[currentBlockIndex]
         }
@@ -154,11 +152,8 @@ class MainActivity : AppCompatActivity() {
                 val html = httpGet(url)
                 val results = parseDuckDuckGoLiteResults(html)
                 runOnUiThread {
-                    if (results.isEmpty()) {
-                        showMessage("No results.")
-                    } else {
-                        showResultsDialog(results)
-                    }
+                    if (results.isEmpty()) showMessage("No results.")
+                    else showResultsDialog(results)
                 }
             } catch (e: Exception) {
                 runOnUiThread { showMessage("Error: ${e.message}") }
@@ -201,28 +196,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun httpGet(urlStr: String): String {
-        val url = URL(urlStr)
-        val conn = url.openConnection() as HttpURLConnection
+        val conn = URL(urlStr).openConnection() as HttpURLConnection
         conn.connectTimeout = 10000
         conn.readTimeout = 15000
         conn.requestMethod = "GET"
         conn.setRequestProperty("User-Agent", "TextReader/1.0")
-        conn.inputStream.bufferedReader().use { br ->
-            return br.readText()
-        }
+        return conn.inputStream.bufferedReader().readText()
     }
 
-    // Very crude HTML stripping and "main text" extraction
     private fun extractMainText(html: String): String {
-        val noScripts = html.replace(Regex("(?is)<script.*?>.*?</script>"), "")
+        val cleaned = html
+            .replace(Regex("(?is)<script.*?>.*?</script>"), "")
             .replace(Regex("(?is)<style.*?>.*?</style>"), "")
-        val text = noScripts.replace(Regex("(?is)<br\\s*/?>"), "\n")
+            .replace(Regex("(?is)<br\\s*/?>"), "\n")
             .replace(Regex("(?is)</p>"), "\n\n")
             .replace(Regex("(?is)<.*?>"), "")
-        val lines = text.lines()
+
+        return cleaned.lines()
             .map { it.trim() }
             .filter { it.length > 40 }
-        return lines.joinToString("\n\n")
+            .joinToString("\n\n")
     }
 
     private fun splitIntoBlocks(text: String, maxChars: Int): List<String> {
@@ -230,6 +223,7 @@ class MainActivity : AppCompatActivity() {
         val words = text.split(Regex("\\s+"))
         val blocks = mutableListOf<String>()
         val sb = StringBuilder()
+
         for (w in words) {
             if (sb.length + w.length + 1 > maxChars) {
                 blocks.add(sb.toString().trim())
@@ -237,45 +231,31 @@ class MainActivity : AppCompatActivity() {
             }
             sb.append(w).append(' ')
         }
+
         if (sb.isNotBlank()) blocks.add(sb.toString().trim())
         return blocks
     }
 
     private fun parseDuckDuckGoLiteResults(html: String): List<Pair<String, String>> {
-        // Very naive parsing: look for <a href="...">Title</a> inside result list
         val results = mutableListOf<Pair<String, String>>()
         val regex = Regex("<a href=\"(http[^\"]+)\">([^<]+)</a>", RegexOption.IGNORE_CASE)
         for (m in regex.findAll(html)) {
             val url = m.groupValues[1]
             val title = m.groupValues[2]
-            if (url.startsWith("http")) {
-                results.add(title to url)
-            }
+            results.add(title to url)
         }
         return results.take(20)
     }
 
-    // ---------- Bookmarks ----------
     private fun prefs() = getSharedPreferences("bookmarks", Context.MODE_PRIVATE)
 
     private fun loadBookmarks(): MutableList<Bookmark> {
-        val json = prefs().getString("list", "[]") ?: "[]"
-        return try {
-            val items = mutableListOf<Bookmark>()
-            val parts = json.split("||").filter { it.isNotBlank() }
-            for (p in parts) {
-                val fields = p.split("::", limit = 3)
-                if (fields.size == 3) {
-                    val title = fields[0]
-                    val url = fields[1]
-                    val idx = fields[2].toIntOrNull() ?: 0
-                    items.add(Bookmark(title, url, idx))
-                }
-            }
-            items
-        } catch (e: Exception) {
-            mutableListOf()
-        }
+        val raw = prefs().getString("list", "") ?: ""
+        if (raw.isBlank()) return mutableListOf()
+        return raw.split("||").mapNotNull {
+            val p = it.split("::")
+            if (p.size == 3) Bookmark(p[0], p[1], p[2].toIntOrNull() ?: 0) else null
+        }.toMutableList()
     }
 
     private fun saveBookmarks(list: List<Bookmark>) {
@@ -286,13 +266,9 @@ class MainActivity : AppCompatActivity() {
     private fun addOrUpdateBookmark() {
         val url = currentUrl ?: return
         val list = loadBookmarks()
-        val existing = list.indexOfFirst { it.url == url }
+        val idx = list.indexOfFirst { it.url == url }
         val bm = Bookmark(currentTitle.ifBlank { url }, url, currentBlockIndex)
-        if (existing >= 0) {
-            list[existing] = bm
-        } else {
-            list.add(bm)
-        }
+        if (idx >= 0) list[idx] = bm else list.add(bm)
         saveBookmarks(list)
     }
 
@@ -305,6 +281,7 @@ class MainActivity : AppCompatActivity() {
                 .show()
             return
         }
+
         val titles = list.map { it.title }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("Bookmarks")
@@ -314,17 +291,15 @@ class MainActivity : AppCompatActivity() {
                 loadUrl(bm.url)
                 currentBlockIndex = bm.blockIndex
             }
-            .setPositiveButton("Add current") { _, _ ->
-                addOrUpdateBookmark()
-            }
+            .setPositiveButton("Add current") { _, _ -> addOrUpdateBookmark() }
             .setNegativeButton("Close", null)
             .show()
     }
 
     private fun maybeOfferBookmarkRestore() {
         val url = currentUrl ?: return
-        val list = loadBookmarks()
-        val bm = list.firstOrNull { it.url == url } ?: return
+        val bm = loadBookmarks().firstOrNull { it.url == url } ?: return
+
         AlertDialog.Builder(this)
             .setMessage("Resume from last position?")
             .setPositiveButton("Yes") { _, _ ->
@@ -339,8 +314,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (currentUrl != null && blocks.isNotEmpty()) {
-            addOrUpdateBookmark()
-        }
+        if (currentUrl != null && blocks.isNotEmpty()) addOrUpdateBookmark()
     }
 }
