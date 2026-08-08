@@ -35,7 +35,7 @@ Download `app-debug.apk` and open it on your phone to install (you may need to a
 - **Read aloud (TTS)** — tap **TTS** in the bottom bar to hear the current page read out loud, block by block. The sentence being read is highlighted; when a block finishes it auto-advances to the next one. The voice auto-detects the language of the page you're reading (from `<html lang>` or a content heuristic) and uses it for both engines.
 - **Voice modes** — Settings → Voice: *auto* (offline engine, online fallback), *offline only*, or *online always*. If your phone has no TTS engine installed, the app automatically uses an online voice — no engine needed.
 - **Voice speed** — Settings → Voice speed lets you set 0.5×–2.0×, applied to both the offline engine and the online voice.
-- **Day / Night themes** — toggle via ⋮ → *Toggle theme*.
+- **Day / Night / OLED themes** — cycle via ⋮ → *Toggle theme*. OLED uses a pure-black background, light-grey text, and black buttons with thin grey borders.
 - **Data backup** — Settings → Export/Import saves your settings, bookmarks and history to a JSON file (via the system file picker), so you can move them between devices.
 - **Settings** — search engine, results per page, paragraphs per page, max characters per block, chronology length, text size, Groq API key, voice mode/language/speed, toggles for showing the page title, page number, and compact URL.
 

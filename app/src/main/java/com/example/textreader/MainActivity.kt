@@ -9,6 +9,8 @@ import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.text.InputType
 import android.text.SpannableString
 import android.text.Spanned
@@ -92,7 +94,11 @@ class MainActivity : AppCompatActivity() {
     private var rawParagraphs: List<String> = emptyList()
     private var currentLinks: List<LinkItem> = emptyList()
     private var currentImageUrl: String? = null
-    private var isNight = false
+    private var themeMode = 0
+
+    private val themeNames = listOf("Day", "Night", "OLED black")
+    private val defaultButtonBg = HashMap<Int, Drawable>()
+    private val defaultButtonText = HashMap<Int, android.content.res.ColorStateList>()
 
     private var searchEngine = "duck_lite"
     private var resultsPerPage = 10
@@ -1602,7 +1608,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAiResult(answer: String) {
         val tv = TextView(this)
-        tv.setTextColor(if (isNight) getColor(R.color.nightText) else getColor(R.color.dayText))
+        tv.setTextColor(themeColors().second)
         tv.textSize = textSize
         tv.setTextIsSelectable(true)
         tv.setPadding(dp(16), dp(16), dp(16), dp(16))
@@ -1682,7 +1688,9 @@ class MainActivity : AppCompatActivity() {
         maxChars = p.getInt("max_chars", 2000)
         chronologyLength = p.getInt("chronology_length", 5)
         groqKey = p.getString("groq_key", "") ?: ""
-        isNight = p.getBoolean("night", false)
+        themeMode = p.getInt("theme", -1).let {
+            if (it in 0..2) it else if (p.getBoolean("night", false)) 1 else 0
+        }
         textSize = p.getFloat("text_size", 16f)
         showTitle = p.getBoolean("show_title", true)
         showPageNumber = p.getBoolean("show_page_number", true)
@@ -1699,7 +1707,7 @@ class MainActivity : AppCompatActivity() {
             .putInt("max_chars", maxChars)
             .putInt("chronology_length", chronologyLength)
             .putString("groq_key", groqKey)
-            .putBoolean("night", isNight)
+            .putInt("theme", themeMode)
             .putFloat("text_size", textSize)
             .putBoolean("show_title", showTitle)
             .putBoolean("show_page_number", showPageNumber)
@@ -1748,6 +1756,7 @@ class MainActivity : AppCompatActivity() {
         add("Voice: ${ttsModeLabel()}", 10)
         add("Voice language: ${langDisplay()}", 11)
         add("Voice speed: ${speedLabel()}", 12)
+        add("Theme: ${themeNames[themeMode]}", 15)
         add("Export data (settings + bookmarks + history)", 13)
         add("Import data from backup", 14)
         AlertDialog.Builder(this)
@@ -1784,6 +1793,7 @@ class MainActivity : AppCompatActivity() {
                     12 -> pickTtsSpeed()
                     13 -> exportData()
                     14 -> importData()
+                    15 -> toggleTheme()
                 }
             }
             .setNegativeButton("Close", null)
@@ -1906,7 +1916,7 @@ class MainActivity : AppCompatActivity() {
             .put("max_chars", maxChars)
             .put("chronology_length", chronologyLength)
             .put("groq_key", groqKey)
-            .put("night", isNight)
+            .put("theme", themeMode)
             .put("text_size", textSize.toDouble())
             .put("show_title", showTitle)
             .put("show_page_number", showPageNumber)
@@ -1940,7 +1950,8 @@ class MainActivity : AppCompatActivity() {
             maxChars = s.optInt("max_chars", maxChars)
             chronologyLength = s.optInt("chronology_length", chronologyLength)
             groqKey = s.optString("groq_key", groqKey)
-            isNight = s.optBoolean("night", isNight)
+            themeMode = s.optInt("theme", if (s.optBoolean("night", false)) 1 else 0)
+            if (themeMode !in 0..2) themeMode = 0
             textSize = s.optDouble("text_size", textSize.toDouble()).toFloat()
             showTitle = s.optBoolean("show_title", showTitle)
             showPageNumber = s.optBoolean("show_page_number", showPageNumber)
@@ -2036,19 +2047,48 @@ class MainActivity : AppCompatActivity() {
     // ========= THEME =========
 
     private fun applyTheme() {
-        val bg = if (isNight) getColor(R.color.nightBackground) else getColor(R.color.dayBackground)
-        val fg = if (isNight) getColor(R.color.nightText) else getColor(R.color.dayText)
+        val (bg, fg) = themeColors()
         rootLayout.setBackgroundColor(bg)
         contentView.setTextColor(fg)
         contentView.textSize = textSize
         urlInput.setTextColor(fg)
         urlInput.setHintTextColor(fg and 0x55FFFFFF.toInt())
+        styleThemeButtons()
+    }
+
+    private fun themeColors(): Pair<Int, Int> = when (themeMode) {
+        1 -> getColor(R.color.nightBackground) to getColor(R.color.nightText)
+        2 -> getColor(R.color.oledBackground) to getColor(R.color.oledText)
+        else -> getColor(R.color.dayBackground) to getColor(R.color.dayText)
+    }
+
+    private fun styleThemeButtons() {
+        val buttons = listOf(goButton, prevButton, nextButton, ttsButton, bookmarksButton)
+        buttons.forEach { b ->
+            if (!defaultButtonBg.containsKey(b.id)) {
+                defaultButtonBg[b.id] = b.background
+                defaultButtonText[b.id] = b.textColors
+            }
+            if (themeMode == 2) {
+                val d = GradientDrawable()
+                d.shape = GradientDrawable.RECTANGLE
+                d.setColor(getColor(R.color.oledBackground))
+                d.setStroke(dp(1), getColor(R.color.oledBorder))
+                d.cornerRadius = dp(4).toFloat()
+                b.background = d
+                b.setTextColor(getColor(R.color.oledText))
+            } else {
+                b.background = defaultButtonBg[b.id]
+                defaultButtonText[b.id]?.let { b.setTextColor(it) }
+            }
+        }
     }
 
     private fun toggleTheme() {
-        isNight = !isNight
+        themeMode = (themeMode + 1) % 3
         savePrefs()
         applyTheme()
+        toast("Theme: ${themeNames[themeMode]}")
     }
 
     // ========= BOOKMARKS =========
