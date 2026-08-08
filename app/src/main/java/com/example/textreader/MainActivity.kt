@@ -1,9 +1,15 @@
 package com.example.textreader
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.text.InputType
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.BackgroundColorSpan
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.widget.Button
@@ -30,6 +36,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.util.Locale
 
 data class Bookmark(
     val title: String,
@@ -62,6 +69,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var exitButton: Button
     private lateinit var menuButton: ImageButton
     private lateinit var cancelButton: ImageButton
+    private lateinit var ttsButton: Button
 
     private lateinit var gestureDetector: GestureDetectorCompat
 
@@ -90,6 +98,14 @@ class MainActivity : AppCompatActivity() {
     @Volatile
     private var activeConnection: HttpURLConnection? = null
 
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var ttsActive = false
+    private var currentSpannable: SpannableString? = null
+    private var headerLength = 0
+
+    private var pendingBackupJson: String = ""
+
     private var searchResults: List<Pair<String, String>> = emptyList()
     private var searchOffset = 0
 
@@ -116,6 +132,7 @@ class MainActivity : AppCompatActivity() {
         exitButton = findViewById(R.id.exitButton)
         menuButton = findViewById(R.id.menuButton)
         cancelButton = findViewById(R.id.cancelButton)
+        ttsButton = findViewById(R.id.ttsButton)
 
         loadPrefs()
 
@@ -165,10 +182,13 @@ class MainActivity : AppCompatActivity() {
         prevButton.setOnClickListener { previousBlock() }
         nextButton.setOnClickListener { nextBlock() }
         cancelButton.setOnClickListener { urlInput.text.clear() }
+        ttsButton.setOnClickListener { toggleTts() }
         themeButton.setOnClickListener { toggleTheme() }
         exitButton.setOnClickListener { finish() }
 
         setupMenu()
+
+        initTts()
 
         applyTheme()
         showHome()
@@ -214,6 +234,7 @@ class MainActivity : AppCompatActivity() {
     // ========= HOME =========
 
     private fun showHome() {
+        stopTtsOnNewPage()
         currentUrl = null
         rawParagraphs = emptyList()
         currentLinks = emptyList()
@@ -280,6 +301,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun presentArticle(ext: Extracted, url: String) {
+        stopTtsOnNewPage()
         currentTitle = ext.title ?: url
         currentLinks = ext.links
         currentImageUrl = ext.image
@@ -315,9 +337,7 @@ class MainActivity : AppCompatActivity() {
         return pages
     }
 
-    private fun renderBlock() {
-        if (blocks.isEmpty()) return
-        val body = blocks[currentBlockIndex]
+    private fun buildHeader(): String {
         val lines = mutableListOf<String>()
         if (showTitle && currentTitle.isNotEmpty()) lines.add("▌$currentTitle")
         if (showCompactUrl && !currentUrl.isNullOrBlank()) {
@@ -327,8 +347,22 @@ class MainActivity : AppCompatActivity() {
             val remaining = blocks.size - currentBlockIndex - 1
             lines.add("— Block ${currentBlockIndex + 1}/${blocks.size} · $remaining left —")
         }
-        val header = if (lines.isEmpty()) "" else lines.joinToString("\n") + "\n\n"
-        contentView.text = header + body
+        return if (lines.isEmpty()) "" else lines.joinToString("\n") + "\n\n"
+    }
+
+    private fun renderBlock() {
+        if (blocks.isEmpty()) return
+        contentView.text = buildHeader() + blocks[currentBlockIndex]
+        currentSpannable = null
+    }
+
+    private fun renderBlockWithSpannable() {
+        if (blocks.isEmpty()) return
+        val header = buildHeader()
+        headerLength = header.length
+        val full = SpannableString(header + blocks[currentBlockIndex])
+        currentSpannable = full
+        contentView.text = full
     }
 
     private fun shortenMiddle(text: String, maxLen: Int): String {
@@ -345,10 +379,126 @@ class MainActivity : AppCompatActivity() {
         toast("Text size: ${textSize.toInt()}sp")
     }
 
+    // ========= TTS =========
+
+    private fun initTts() {
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val result = tts?.setLanguage(Locale.getDefault())
+                ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
+                    result != TextToSpeech.LANG_NOT_SUPPORTED
+                if (ttsReady) {
+                    tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) {}
+                        override fun onDone(utteranceId: String?) {
+                            onTtsUtteranceDone()
+                        }
+                        @Deprecated("Deprecated in Java")
+                        override fun onError(utteranceId: String?) {}
+                        override fun onRangeStart(
+                            utteranceId: String?,
+                            start: Int,
+                            end: Int,
+                            frame: Int
+                        ) {
+                            runOnUiThread { highlightTtsRange(start, end) }
+                        }
+                    })
+                }
+            }
+        }
+    }
+
+    private fun toggleTts() {
+        if (ttsActive) stopTts() else startTts()
+    }
+
+    private fun startTts() {
+        if (!ttsReady) {
+            toast("Text-to-speech not ready (install a TTS engine)")
+            return
+        }
+        if (blocks.isEmpty()) {
+            toast("Nothing to read")
+            return
+        }
+        ttsActive = true
+        ttsButton.text = "TTS ■"
+        speakBlock(currentBlockIndex)
+    }
+
+    private fun stopTts() {
+        ttsActive = false
+        tts?.stop()
+        clearTtsHighlight()
+        ttsButton.text = "TTS"
+    }
+
+    private fun speakBlock(index: Int) {
+        if (!ttsActive) return
+        if (index !in blocks.indices) {
+            runOnUiThread {
+                stopTts()
+                toast("Finished reading.")
+            }
+            return
+        }
+        runOnUiThread {
+            currentBlockIndex = index
+            renderBlockWithSpannable()
+        }
+        tts?.speak(blocks[index], TextToSpeech.QUEUE_FLUSH, null, "block$index")
+    }
+
+    private fun onTtsUtteranceDone() {
+        if (!ttsActive) return
+        speakBlock(currentBlockIndex + 1)
+    }
+
+    private fun highlightTtsRange(start: Int, end: Int) {
+        val sp = currentSpannable ?: return
+        if (start < 0 || end < start) return
+        val hs = headerLength + start
+        val he = headerLength + end
+        if (he > sp.length) return
+        var sStart = hs
+        while (sStart > headerLength && !isSentenceBreak(sp[sStart - 1])) sStart--
+        var sEnd = he
+        while (sEnd < sp.length && !isSentenceBreak(sp[sEnd - 1])) sEnd++
+        for (span in sp.getSpans(0, sp.length, BackgroundColorSpan::class.java)) {
+            sp.removeSpan(span)
+        }
+        sp.setSpan(
+            BackgroundColorSpan(TTS_HIGHLIGHT_COLOR),
+            sStart,
+            sEnd,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+    }
+
+    private fun clearTtsHighlight() {
+        val sp = currentSpannable ?: return
+        for (span in sp.getSpans(0, sp.length, BackgroundColorSpan::class.java)) {
+            sp.removeSpan(span)
+        }
+    }
+
+    private fun isSentenceBreak(c: Char): Boolean =
+        c == '.' || c == '!' || c == '?' || c == '\n'
+
+    private fun stopTtsOnNewPage() {
+        if (ttsActive) stopTts()
+    }
+
     private fun nextBlock() {
         if (currentBlockIndex < blocks.size - 1) {
             currentBlockIndex++
-            renderBlock()
+            if (ttsActive) {
+                tts?.stop()
+                speakBlock(currentBlockIndex)
+            } else {
+                renderBlock()
+            }
         } else {
             tryLoadNextPart()
         }
@@ -357,7 +507,12 @@ class MainActivity : AppCompatActivity() {
     private fun previousBlock() {
         if (currentBlockIndex > 0) {
             currentBlockIndex--
-            renderBlock()
+            if (ttsActive) {
+                tts?.stop()
+                speakBlock(currentBlockIndex)
+            } else {
+                renderBlock()
+            }
         }
     }
 
@@ -1013,7 +1168,9 @@ class MainActivity : AppCompatActivity() {
             "Text size: ${textSize.toInt()}sp",
             "Show page title: ${if (showTitle) "on" else "off"}",
             "Show page number: ${if (showPageNumber) "on" else "off"}",
-            "Show compact URL: ${if (showCompactUrl) "on" else "off"}"
+            "Show compact URL: ${if (showCompactUrl) "on" else "off"}",
+            "Export data (settings + bookmarks + history)",
+            "Import data from backup"
         )
         AlertDialog.Builder(this)
             .setTitle("Settings")
@@ -1044,10 +1201,132 @@ class MainActivity : AppCompatActivity() {
                         savePrefs()
                         renderBlock()
                     }
+                    10 -> exportData()
+                    11 -> importData()
                 }
             }
             .setNegativeButton("Close", null)
             .show()
+    }
+
+    // ========= BACKUP (settings + bookmarks + history) =========
+
+    private fun exportData() {
+        pendingBackupJson = buildBackupJson()
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, "textreader_backup.json")
+        }
+        startActivityForResult(intent, EXPORT_REQUEST)
+    }
+
+    private fun importData() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+        }
+        startActivityForResult(intent, IMPORT_REQUEST)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != Activity.RESULT_OK || data?.data == null) return
+        val uri = data.data!!
+        when (requestCode) {
+            EXPORT_REQUEST -> {
+                try {
+                    contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(pendingBackupJson.toByteArray())
+                    }
+                    toast("Backup exported")
+                } catch (e: Exception) {
+                    toast("Export failed: ${e.message}")
+                }
+            }
+            IMPORT_REQUEST -> {
+                try {
+                    val text = contentResolver.openInputStream(uri)
+                        ?.bufferedReader()?.readText() ?: return
+                    applyBackupJson(text)
+                    toast("Backup imported")
+                } catch (e: Exception) {
+                    toast("Import failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun buildBackupJson(): String {
+        val settings = JSONObject()
+            .put("engine", searchEngine)
+            .put("results_per_page", resultsPerPage)
+            .put("paras_per_page", parasPerPage)
+            .put("max_chars", maxChars)
+            .put("chronology_length", chronologyLength)
+            .put("groq_key", groqKey)
+            .put("night", isNight)
+            .put("text_size", textSize.toDouble())
+            .put("show_title", showTitle)
+            .put("show_page_number", showPageNumber)
+            .put("show_compact_url", showCompactUrl)
+        val bms = JSONArray()
+        for (b in loadBookmarks()) {
+            bms.put(JSONObject().put("title", b.title).put("url", b.url).put("block", b.blockIndex))
+        }
+        val hist = JSONArray()
+        for (h in loadHistory()) {
+            hist.put(JSONObject().put("title", h.first).put("url", h.second))
+        }
+        return JSONObject()
+            .put("app", "TextReader")
+            .put("version", 1)
+            .put("settings", settings)
+            .put("bookmarks", bms)
+            .put("history", hist)
+            .toString(2)
+    }
+
+    private fun applyBackupJson(text: String) {
+        val root = JSONObject(text)
+        val s = root.optJSONObject("settings")
+        if (s != null) {
+            searchEngine = s.optString("engine", searchEngine)
+            resultsPerPage = s.optInt("results_per_page", resultsPerPage)
+            parasPerPage = s.optInt("paras_per_page", parasPerPage)
+            maxChars = s.optInt("max_chars", maxChars)
+            chronologyLength = s.optInt("chronology_length", chronologyLength)
+            groqKey = s.optString("groq_key", groqKey)
+            isNight = s.optBoolean("night", isNight)
+            textSize = s.optDouble("text_size", textSize.toDouble()).toFloat()
+            showTitle = s.optBoolean("show_title", showTitle)
+            showPageNumber = s.optBoolean("show_page_number", showPageNumber)
+            showCompactUrl = s.optBoolean("show_compact_url", showCompactUrl)
+            savePrefs()
+            applyTheme()
+            contentView.textSize = textSize
+            renderBlock()
+        }
+        val bms = root.optJSONArray("bookmarks")
+        if (bms != null) {
+            val list = mutableListOf<Bookmark>()
+            for (i in 0 until bms.length()) {
+                val b = bms.getJSONObject(i)
+                list.add(Bookmark(b.optString("title"), b.optString("url"), b.optInt("block")))
+            }
+            saveBookmarks(list)
+        }
+        val hist = root.optJSONArray("history")
+        if (hist != null) {
+            val list = mutableListOf<Pair<String, String>>()
+            for (i in 0 until hist.length()) {
+                val h = hist.getJSONObject(i)
+                list.add(Pair(h.optString("title"), h.optString("url")))
+            }
+            prefs().edit()
+                .putString("history", list.joinToString("|||") { "${it.first}::${it.second}" })
+                .apply()
+        }
     }
 
     private fun pickEngine() {
@@ -1198,6 +1477,12 @@ class MainActivity : AppCompatActivity() {
         if (currentUrl != null && blocks.isNotEmpty()) addOrUpdateBookmark()
     }
 
+    override fun onDestroy() {
+        tts?.stop()
+        tts?.shutdown()
+        super.onDestroy()
+    }
+
     // ========= MISC =========
 
     private fun showMessage(msg: String) {
@@ -1218,5 +1503,10 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 13; TextReader) " +
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+
+        private const val EXPORT_REQUEST = 1001
+        private const val IMPORT_REQUEST = 1002
+
+        private const val TTS_HIGHLIGHT_COLOR = 0x99FFC107.toInt()
     }
 }
