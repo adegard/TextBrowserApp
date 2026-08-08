@@ -52,18 +52,26 @@
             android:background="?android:attr/selectableItemBackgroundBorderless" />
     </LinearLayout>
 
-    <TextView
-        android:id="@+id/contentView"
+    <ScrollView
+        android:id="@+id/scrollView"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:padding="16dp"
-        android:textSize="16sp"
-        android:gravity="top|start"
+        android:fillViewport="false"
         android:scrollbars="vertical"
         app:layout_constraintTop_toBottomOf="@id/topBar"
         app:layout_constraintBottom_toTopOf="@id/bottomBar"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <TextView
+            android:id="@+id/contentView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="16dp"
+            android:textSize="16sp"
+            android:gravity="top|start"
+            android:textIsSelectable="true" />
+    </ScrollView>
 
     <LinearLayout
         android:id="@+id/bottomBar"

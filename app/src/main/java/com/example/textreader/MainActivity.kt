@@ -153,7 +153,7 @@ class MainActivity : AppCompatActivity() {
 
         contentView.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
-            true
+            false
         }
 
         goButton.setOnClickListener {
@@ -164,7 +164,7 @@ class MainActivity : AppCompatActivity() {
         bookmarksButton.setOnClickListener { showBookmarksDialog() }
         prevButton.setOnClickListener { previousBlock() }
         nextButton.setOnClickListener { nextBlock() }
-        cancelButton.setOnClickListener { cancelLoad() }
+        cancelButton.setOnClickListener { urlInput.text.clear() }
         themeButton.setOnClickListener { toggleTheme() }
         exitButton.setOnClickListener { finish() }
 
@@ -219,18 +219,10 @@ class MainActivity : AppCompatActivity() {
         currentLinks = emptyList()
         currentImageUrl = null
         val msg = """
-            ═══ TEXT READER (Android) ═══
-            A port of text_browser.py 1.52
-
-            Type a URL or search query, then tap Go.
-            Swipe LEFT/RIGHT to change blocks.
-
-            ⋮ Menu: Home · Links · History · Settings
-                     Share · I'm feeling lucky · AI
-
-            Engine: ${engineNames[searchEngine]}
-            Bookmarks: tap the Bookmarks button.
-            Tip: "ifl query" opens the first result.
+            ═══ TEXT READER ═══
+            Type a URL or search, tap Go.
+            ◀ ▶ or swipe to turn pages.
+            ⋮ menu: Links · History · Settings · AI
         """.trimIndent()
         showMessage(msg)
     }
@@ -351,13 +343,6 @@ class MainActivity : AppCompatActivity() {
         savePrefs()
         contentView.textSize = textSize
         toast("Text size: ${textSize.toInt()}sp")
-    }
-
-    private fun cancelLoad() {
-        loadGeneration++
-        activeConnection?.disconnect()
-        activeConnection = null
-        showMessage("Loading cancelled.")
     }
 
     private fun nextBlock() {
