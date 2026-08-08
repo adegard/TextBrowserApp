@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
+import android.media.PlaybackParams
+import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -650,7 +652,14 @@ class MainActivity : AppCompatActivity() {
                     toast("Voice playback error")
                     true
                 }
-                mp.setOnPreparedListener { it.start() }
+                mp.setOnPreparedListener {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && ttsSpeed != 1.0f) {
+                        try {
+                            mp.playbackParams = mp.playbackParams.setSpeed(ttsSpeed)
+                        } catch (e: Exception) {}
+                    }
+                    it.start()
+                }
                 mp.prepareAsync()
             } catch (e: Exception) {
                 file.delete()
@@ -1655,7 +1664,7 @@ class MainActivity : AppCompatActivity() {
         }.toTypedArray()
         val current = speeds.indexOfFirst { it == ttsSpeed }.coerceAtLeast(0)
         AlertDialog.Builder(this)
-            .setTitle("Voice speed (offline engine)")
+            .setTitle("Voice speed")
             .setSingleChoiceItems(labels, current) { _, which ->
                 ttsSpeed = speeds[which]
                 savePrefs()
