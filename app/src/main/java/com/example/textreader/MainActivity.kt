@@ -3,6 +3,7 @@ package com.example.textreader
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.media.MediaPlayer
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -32,6 +33,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
@@ -56,6 +58,12 @@ data class Extracted(
     val image: String?
 )
 
+data class SentenceRange(
+    val start: Int,
+    val end: Int,
+    val text: String
+)
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var rootLayout: ConstraintLayout
@@ -65,11 +73,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prevButton: Button
     private lateinit var nextButton: Button
     private lateinit var bookmarksButton: Button
-    private lateinit var themeButton: Button
-    private lateinit var exitButton: Button
+    private lateinit var ttsButton: Button
     private lateinit var menuButton: ImageButton
     private lateinit var cancelButton: ImageButton
-    private lateinit var ttsButton: Button
 
     private lateinit var gestureDetector: GestureDetectorCompat
 
@@ -92,6 +98,7 @@ class MainActivity : AppCompatActivity() {
     private var showTitle = true
     private var showPageNumber = true
     private var showCompactUrl = true
+    private var ttsMode = "auto"
 
     @Volatile
     private var loadGeneration = 0
@@ -101,6 +108,10 @@ class MainActivity : AppCompatActivity() {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var ttsActive = false
+    private var ttsOnline = false
+    private var mediaPlayer: MediaPlayer? = null
+    private var onlineSentences: List<SentenceRange> = emptyList()
+    private var onlineSentenceIndex = 0
     private var currentSpannable: SpannableString? = null
     private var headerLength = 0
 
@@ -128,8 +139,6 @@ class MainActivity : AppCompatActivity() {
         prevButton = findViewById(R.id.prevButton)
         nextButton = findViewById(R.id.nextButton)
         bookmarksButton = findViewById(R.id.bookmarksButton)
-        themeButton = findViewById(R.id.themeButton)
-        exitButton = findViewById(R.id.exitButton)
         menuButton = findViewById(R.id.menuButton)
         cancelButton = findViewById(R.id.cancelButton)
         ttsButton = findViewById(R.id.ttsButton)
@@ -183,8 +192,6 @@ class MainActivity : AppCompatActivity() {
         nextButton.setOnClickListener { nextBlock() }
         cancelButton.setOnClickListener { urlInput.text.clear() }
         ttsButton.setOnClickListener { toggleTts() }
-        themeButton.setOnClickListener { toggleTheme() }
-        exitButton.setOnClickListener { finish() }
 
         setupMenu()
 
@@ -209,6 +216,8 @@ class MainActivity : AppCompatActivity() {
             popup.menu.add(0, 8, 7, "Save bookmark")
             popup.menu.add(0, 9, 8, "A+ bigger text")
             popup.menu.add(0, 10, 9, "A− smaller text")
+            popup.menu.add(0, 11, 10, "Toggle theme")
+            popup.menu.add(0, 12, 11, "Exit")
             popup.setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> showHome()
@@ -224,6 +233,8 @@ class MainActivity : AppCompatActivity() {
                     }
                     9 -> changeTextSize(2f)
                     10 -> changeTextSize(-2f)
+                    11 -> toggleTheme()
+                    12 -> finish()
                 }
                 true
             }
@@ -414,28 +425,55 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startTts() {
-        if (!ttsReady) {
-            toast("Text-to-speech not ready (install a TTS engine)")
-            return
-        }
         if (blocks.isEmpty()) {
             toast("Nothing to read")
             return
         }
+        val useLocal = ttsReady && ttsMode != "online"
+        if (!useLocal && ttsMode == "local") {
+            toast("No local TTS engine installed")
+            return
+        }
+        if (!useLocal && !ttsReady && ttsMode != "online") {
+            toast("No local TTS engine — using online voice")
+        }
         ttsActive = true
         ttsButton.text = "TTS ■"
-        speakBlock(currentBlockIndex)
+        if (useLocal) {
+            ttsOnline = false
+            speakBlock(currentBlockIndex)
+        } else {
+            ttsOnline = true
+            speakOnlineBlock(currentBlockIndex)
+        }
     }
 
     private fun stopTts() {
         ttsActive = false
+        ttsOnline = false
         tts?.stop()
+        mediaPlayer?.release()
+        mediaPlayer = null
+        onlineSentences = emptyList()
+        onlineSentenceIndex = 0
         clearTtsHighlight()
         ttsButton.text = "TTS"
     }
 
+    private fun stopPlayback() {
+        tts?.stop()
+        mediaPlayer?.release()
+        mediaPlayer = null
+    }
+
+    private fun restartAtCurrentBlock() {
+        if (ttsOnline) speakOnlineBlock(currentBlockIndex) else speakBlock(currentBlockIndex)
+    }
+
+    // ---- local TTS ----
+
     private fun speakBlock(index: Int) {
-        if (!ttsActive) return
+        if (!ttsActive || ttsOnline) return
         if (index !in blocks.indices) {
             runOnUiThread {
                 stopTts()
@@ -451,8 +489,160 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onTtsUtteranceDone() {
-        if (!ttsActive) return
+        if (!ttsActive || ttsOnline) return
         speakBlock(currentBlockIndex + 1)
+    }
+
+    // ---- online TTS (Google Translate voice, no engine needed) ----
+
+    private fun speakOnlineBlock(index: Int) {
+        if (!ttsActive || !ttsOnline) return
+        if (index !in blocks.indices) {
+            runOnUiThread {
+                stopTts()
+                toast("Finished reading.")
+            }
+            return
+        }
+        onlineSentences = splitSentences(blocks[index])
+        onlineSentenceIndex = 0
+        runOnUiThread {
+            currentBlockIndex = index
+            renderBlockWithSpannable()
+        }
+        playOnlineSentence()
+    }
+
+    private fun splitSentences(text: String): List<SentenceRange> {
+        val result = mutableListOf<SentenceRange>()
+        var i = 0
+        while (i < text.length) {
+            var s = i
+            while (s < text.length && text[s].isWhitespace()) s++
+            if (s >= text.length) break
+            var e = s
+            while (e < text.length && text[e] != '.' && text[e] != '!' &&
+                text[e] != '?' && text[e] != '\n'
+            ) e++
+            var end = e
+            if (end < text.length && text[end] != '\n') end++
+            result.add(SentenceRange(s, end, text.substring(s, end).trim()))
+            i = end
+        }
+        return if (result.isEmpty()) {
+            listOf(SentenceRange(0, text.length, text.trim()))
+        } else result
+    }
+
+    private fun playOnlineSentence() {
+        if (!ttsActive || !ttsOnline) return
+        if (onlineSentenceIndex >= onlineSentences.size) {
+            speakOnlineBlock(currentBlockIndex + 1)
+            return
+        }
+        val sentence = onlineSentences[onlineSentenceIndex]
+        val index = onlineSentenceIndex
+        thread {
+            try {
+                val mp3 = fetchOnlineSpeech(sentence.text)
+                if (!ttsActive || !ttsOnline) return@thread
+                runOnUiThread { highlightOnlineSentence(index) }
+                playMp3(mp3)
+            } catch (e: Exception) {
+                runOnUiThread {
+                    if (ttsActive) {
+                        stopTts()
+                        toast("Online voice error: ${e.message}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun onOnlineSentenceDone() {
+        if (!ttsActive || !ttsOnline) return
+        onlineSentenceIndex++
+        playOnlineSentence()
+    }
+
+    private fun playMp3(bytes: ByteArray) {
+        val file = File.createTempFile("tts", ".mp3", cacheDir)
+        runOnUiThread {
+            if (!ttsActive || !ttsOnline) {
+                file.delete()
+                return@runOnUiThread
+            }
+            try {
+                file.writeBytes(bytes)
+                mediaPlayer?.release()
+                val mp = MediaPlayer()
+                mediaPlayer = mp
+                mp.setDataSource(file.absolutePath)
+                mp.setOnCompletionListener {
+                    file.delete()
+                    onOnlineSentenceDone()
+                }
+                mp.setOnErrorListener { _, _, _ ->
+                    file.delete()
+                    stopTts()
+                    toast("Voice playback error")
+                    true
+                }
+                mp.setOnPreparedListener { it.start() }
+                mp.prepareAsync()
+            } catch (e: Exception) {
+                file.delete()
+                stopTts()
+                toast("Voice error: ${e.message}")
+            }
+        }
+    }
+
+    private fun fetchOnlineSpeech(text: String): ByteArray {
+        val langs = listOf(ttsLangCode(), "en").distinct()
+        var lastError: Exception? = null
+        for (lang in langs) {
+            try {
+                val q = URLEncoder.encode(text, "UTF-8")
+                val url = "https://translate.google.com/translate_tts" +
+                    "?ie=UTF-8&client=tw-ob&tl=$lang&q=$q"
+                val conn = URL(url).openConnection() as HttpURLConnection
+                conn.connectTimeout = 10000
+                conn.readTimeout = 15000
+                conn.setRequestProperty("User-Agent", USER_AGENT)
+                conn.setRequestProperty("Referer", "https://translate.google.com/")
+                if (conn.responseCode == 200) {
+                    return conn.inputStream.use { it.readBytes() }
+                }
+                lastError = IOException("HTTP ${conn.responseCode}")
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        throw lastError ?: IOException("Online voice failed")
+    }
+
+    private fun ttsLangCode(): String {
+        val l = Locale.getDefault().language.lowercase()
+        return if (l.length == 2 && l.isNotBlank()) l else "en"
+    }
+
+    private fun highlightOnlineSentence(index: Int) {
+        if (index !in onlineSentences.indices) return
+        val sp = currentSpannable ?: return
+        val range = onlineSentences[index]
+        val sStart = headerLength + range.start
+        val sEnd = headerLength + range.end
+        if (sEnd > sp.length) return
+        for (span in sp.getSpans(0, sp.length, BackgroundColorSpan::class.java)) {
+            sp.removeSpan(span)
+        }
+        sp.setSpan(
+            BackgroundColorSpan(TTS_HIGHLIGHT_COLOR),
+            sStart,
+            sEnd,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
     }
 
     private fun highlightTtsRange(start: Int, end: Int) {
@@ -494,8 +684,8 @@ class MainActivity : AppCompatActivity() {
         if (currentBlockIndex < blocks.size - 1) {
             currentBlockIndex++
             if (ttsActive) {
-                tts?.stop()
-                speakBlock(currentBlockIndex)
+                stopPlayback()
+                restartAtCurrentBlock()
             } else {
                 renderBlock()
             }
@@ -508,8 +698,8 @@ class MainActivity : AppCompatActivity() {
         if (currentBlockIndex > 0) {
             currentBlockIndex--
             if (ttsActive) {
-                tts?.stop()
-                speakBlock(currentBlockIndex)
+                stopPlayback()
+                restartAtCurrentBlock()
             } else {
                 renderBlock()
             }
@@ -1120,6 +1310,7 @@ class MainActivity : AppCompatActivity() {
         showTitle = p.getBoolean("show_title", true)
         showPageNumber = p.getBoolean("show_page_number", true)
         showCompactUrl = p.getBoolean("show_compact_url", true)
+        ttsMode = p.getString("tts_mode", "auto") ?: "auto"
     }
 
     private fun savePrefs() {
@@ -1135,6 +1326,7 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("show_title", showTitle)
             .putBoolean("show_page_number", showPageNumber)
             .putBoolean("show_compact_url", showCompactUrl)
+            .putString("tts_mode", ttsMode)
             .apply()
     }
 
@@ -1169,6 +1361,7 @@ class MainActivity : AppCompatActivity() {
             "Show page title: ${if (showTitle) "on" else "off"}",
             "Show page number: ${if (showPageNumber) "on" else "off"}",
             "Show compact URL: ${if (showCompactUrl) "on" else "off"}",
+            "Voice: ${ttsModeLabel()}",
             "Export data (settings + bookmarks + history)",
             "Import data from backup"
         )
@@ -1201,16 +1394,48 @@ class MainActivity : AppCompatActivity() {
                         savePrefs()
                         renderBlock()
                     }
-                    10 -> exportData()
-                    11 -> importData()
+                    10 -> pickTtsMode()
+                    11 -> exportData()
+                    12 -> importData()
                 }
             }
             .setNegativeButton("Close", null)
             .show()
     }
 
-    // ========= BACKUP (settings + bookmarks + history) =========
+    private fun ttsModeLabel(): String = when (ttsMode) {
+        "auto" -> "auto (offline, online fallback)"
+        "local" -> "offline engine only"
+        "online" -> "online voice always"
+        else -> ttsMode
+    }
 
+    private fun pickTtsMode() {
+        val modes = arrayOf(
+            "Auto — offline engine, online fallback",
+            "Offline only — requires a TTS engine",
+            "Online always — no engine needed"
+        )
+        val current = when (ttsMode) {
+            "local" -> 1
+            "online" -> 2
+            else -> 0
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Voice mode")
+            .setSingleChoiceItems(modes, current) { _, which ->
+                ttsMode = when (which) {
+                    1 -> "local"
+                    2 -> "online"
+                    else -> "auto"
+                }
+                savePrefs()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    // ========= BACKUP (settings + bookmarks + history) =========
     private fun exportData() {
         pendingBackupJson = buildBackupJson()
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -1270,6 +1495,7 @@ class MainActivity : AppCompatActivity() {
             .put("show_title", showTitle)
             .put("show_page_number", showPageNumber)
             .put("show_compact_url", showCompactUrl)
+            .put("tts_mode", ttsMode)
         val bms = JSONArray()
         for (b in loadBookmarks()) {
             bms.put(JSONObject().put("title", b.title).put("url", b.url).put("block", b.blockIndex))
@@ -1302,6 +1528,7 @@ class MainActivity : AppCompatActivity() {
             showTitle = s.optBoolean("show_title", showTitle)
             showPageNumber = s.optBoolean("show_page_number", showPageNumber)
             showCompactUrl = s.optBoolean("show_compact_url", showCompactUrl)
+            ttsMode = s.optString("tts_mode", ttsMode)
             savePrefs()
             applyTheme()
             contentView.textSize = textSize
@@ -1480,6 +1707,8 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         tts?.stop()
         tts?.shutdown()
+        mediaPlayer?.release()
+        mediaPlayer = null
         super.onDestroy()
     }
 
