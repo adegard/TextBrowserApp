@@ -1009,7 +1009,11 @@ class MainActivity : AppCompatActivity() {
         }
 
     private fun fetchDoc(url: String): Document =
-        Jsoup.connect(url).userAgent(USER_AGENT).timeout(15000).get()
+        Jsoup.connect(url)
+            .userAgent(USER_AGENT)
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .timeout(15000)
+            .get()
 
     private fun searchDuckLite(q: String): List<Pair<String, String>> {
         val doc = fetchDoc("https://lite.duckduckgo.com/lite/?q=${urlencode(q)}")
@@ -1047,7 +1051,10 @@ class MainActivity : AppCompatActivity() {
     private fun searchBing(q: String): List<Pair<String, String>> {
         val results = mutableListOf<Pair<String, String>>()
         for (first in listOf(1, 11)) {
-            val doc = fetchDoc("https://www.bing.com/search?q=${urlencode(q)}&form=MSNVS&first=$first")
+            val doc = fetchDoc(
+                "https://www.bing.com/search?q=${urlencode(q)}&form=MSNVS" +
+                    "&mkt=en-US&setlang=en-US&first=$first"
+            )
             for (a in doc.select("li.b_algo h2 a")) {
                 val title = a.text().trim()
                 val href = unwrapGenericRedirect(a.attr("href"))
