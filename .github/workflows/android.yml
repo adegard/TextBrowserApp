@@ -31,10 +31,10 @@ jobs:
           ls "$ANDROID_HOME/platforms"
           echo "=== GestureDetector.SimpleOnGestureListener ==="
           javap -classpath "$ANDROID_HOME/platforms/android-35/android.jar" 'android.view.GestureDetector$SimpleOnGestureListener' 2>&1 | grep -E "onFling|onDown" || echo "no match"
-          echo "=== kotlinc ==="
-          which kotlinc && kotlinc -version 2>&1 || echo "no system kotlinc"
-          echo "=== java ==="
-          java -version 2>&1
+          echo "=== kotlin compiler resolved by gradle ==="
+          gradle -q :app:compileDebugKotlin --info --stacktrace 2>&1 | grep -iE "kotlin compiler|kotlinc-|kotlin-compiler-embeddable|Using Kotlin|compiler.*version|classpath.*android.jar|android.jar" | head -60 || true
+          echo "=== compile classpath ==="
+          gradle -q :app:dependencies --configuration debugCompileClasspath 2>&1 | head -60 || true
 
       - name: Build Debug APK
         run: gradle :app:assembleDebug
