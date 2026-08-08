@@ -29,8 +29,11 @@ jobs:
         run: |
           echo "=== force transform creation ==="
           gradle -q :app:dependencies --configuration debugCompileClasspath >/dev/null 2>&1 || true
-          echo "=== transformed android.jar GestureDetector ==="
-          find "$HOME/.gradle/caches" -name "android.jar" 2>/dev/null | while read f; do echo "--- $f"; javap -classpath "$f" 'android.view.GestureDetector$SimpleOnGestureListener' 2>&1 | grep -E "onFling|onDown"; done
+          echo "=== android.jar copies in project dir ==="
+          find . -name "android.jar" 2>/dev/null
+          for f in $(find . -name "android.jar" 2>/dev/null); do echo "--- $f"; javap -classpath "$f" 'android.view.GestureDetector$SimpleOnGestureListener' 2>&1 | grep -E "onFling|onDown"; done
+          echo "=== GestureDetector class files in gradle cache ==="
+          find "$HOME/.gradle/caches" -name "GestureDetector*" 2>/dev/null | head -20
           echo "=== WIPING GRADLE BUILD CACHE + KOTLIN INCREMENTAL STATE ==="
           rm -rf "$HOME/.gradle/caches/build-cache-1" "$HOME/.gradle/caches/build-cache-1.1" "$HOME/.kotlin"
           find . -type d -name kotlin -path "*build*" -exec rm -rf {} + 2>/dev/null || true
@@ -38,6 +41,13 @@ jobs:
 
       - name: Build Debug APK
         run: gradle :app:assembleDebug
+
+      - name: Dump Kotlin compiler args (post-build)
+        if: always()
+        run: |
+          echo "=== kotlin args ==="
+          find . -name "*.args" -o -name "kotlin-args*" 2>/dev/null | head
+          find . -path "*compileDebugKotlin*" -type f 2>/dev/null | head -20
 
       - name: Show Kotlin compiler errors
         if: failure()
