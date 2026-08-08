@@ -130,6 +130,7 @@ class MainActivity : AppCompatActivity() {
 
     private var searchResults: List<Pair<String, String>> = emptyList()
     private var searchOffset = 0
+    private var lastSearchEngine = "duck_lite"
 
     private val engineNames = mapOf(
         "duck_lite" to "DuckDuckGo Lite",
@@ -978,19 +979,34 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun search(q: String): List<Pair<String, String>> {
-        val results = when (searchEngine) {
+        val order = when (searchEngine) {
+            "duck_html" -> listOf("duck_html", "duck_lite", "bing", "google", "brave")
+            "brave" -> listOf("brave", "bing", "google", "duck_lite", "duck_html")
+            "google" -> listOf("google", "bing", "brave", "duck_lite", "duck_html")
+            "bing" -> listOf("bing", "google", "brave", "duck_lite", "duck_html")
+            else -> listOf("duck_lite", "duck_html", "bing", "google", "brave")
+        }
+        for (eng in order) {
+            try {
+                val r = searchOne(q, eng)
+                if (r.isNotEmpty()) {
+                    lastSearchEngine = eng
+                    return r
+                }
+            } catch (_: Exception) {
+            }
+        }
+        return emptyList()
+    }
+
+    private fun searchOne(q: String, eng: String): List<Pair<String, String>> =
+        when (eng) {
             "duck_html" -> searchDuckHtml(q)
             "brave" -> searchBrave(q)
             "google" -> searchGoogleText(q)
             "bing" -> searchBing(q)
             else -> searchDuckLite(q)
         }
-        if (results.isEmpty() && searchEngine != "duck_lite") {
-            val fallback = searchDuckLite(q)
-            if (fallback.isNotEmpty()) return fallback
-        }
-        return results
-    }
 
     private fun fetchDoc(url: String): Document =
         Jsoup.connect(url).userAgent(USER_AGENT).timeout(15000).get()
@@ -1064,7 +1080,7 @@ class MainActivity : AppCompatActivity() {
         if (searchOffset + page.size < searchResults.size) titles.add("▸ Next results")
         val prevHeader = if (searchOffset > 0) 1 else 0
         AlertDialog.Builder(this)
-            .setTitle("Results · ${engineNames[searchEngine]}")
+            .setTitle("Results · ${engineNames[lastSearchEngine]}")
             .setItems(titles.toTypedArray()) { _, which ->
                 when {
                     prevHeader == 1 && which == 0 -> {
