@@ -24,24 +24,14 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Diagnose (triggers transforms, dumps transformed android.jar, wipes caches)
-        if: always()
-        run: |
-          echo "=== force transform creation ==="
-          gradle -q :app:dependencies --configuration debugCompileClasspath >/dev/null 2>&1 || true
-          echo "=== android.jar copies in project dir ==="
-          find . -name "android.jar" 2>/dev/null
-          for f in $(find . -name "android.jar" 2>/dev/null); do echo "--- $f"; javap -classpath "$f" 'android.view.GestureDetector$SimpleOnGestureListener' 2>&1 | grep -E "onFling|onDown"; done
-          echo "=== GestureDetector class files in gradle cache ==="
-          find "$HOME/.gradle/caches" -name "GestureDetector*" 2>/dev/null | head -20
-          echo "=== WIPING GRADLE BUILD CACHE + KOTLIN INCREMENTAL STATE ==="
-          rm -rf "$HOME/.gradle/caches/build-cache-1" "$HOME/.gradle/caches/build-cache-1.1" "$HOME/.kotlin"
-          find . -type d -name kotlin -path "*build*" -exec rm -rf {} + 2>/dev/null || true
-          echo "caches wiped"
-
       - name: Build Debug APK (dump compile classpath)
         run: |
-          gradle -I .github/init-print-classpath.gradle :app:assembleDebug 2>&1 | grep -E "COMPILE_CLASSPATH|\.jar|\.aar" | head -120 || true
+          gradle -I .github/init-print-classpath.gradle :app:assembleDebug --console=plain 2>&1 | tee /tmp/build.log
+          echo "=== classpath ==="
+          grep -E "COMPILE_CLASSPATH|\.jar|\.aar" /tmp/build.log | head -120
+          echo "=== build result ==="
+          grep -E "BUILD SUCCESSFUL|BUILD FAILED|overrides nothing|compileDebugKotlin FAILED" /tmp/build.log | head
+          grep -q "BUILD SUCCESSFUL" /tmp/build.log
 
       - name: Show Kotlin compiler errors
         if: failure()
