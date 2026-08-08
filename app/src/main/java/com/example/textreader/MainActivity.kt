@@ -55,6 +55,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var urlInput: EditText
     private lateinit var contentView: TextView
     private lateinit var goButton: Button
+    private lateinit var prevButton: Button
+    private lateinit var nextButton: Button
     private lateinit var bookmarksButton: Button
     private lateinit var themeButton: Button
     private lateinit var exitButton: Button
@@ -97,6 +99,8 @@ class MainActivity : AppCompatActivity() {
         urlInput = findViewById(R.id.urlInput)
         contentView = findViewById(R.id.contentView)
         goButton = findViewById(R.id.goButton)
+        prevButton = findViewById(R.id.prevButton)
+        nextButton = findViewById(R.id.nextButton)
         bookmarksButton = findViewById(R.id.bookmarksButton)
         themeButton = findViewById(R.id.themeButton)
         exitButton = findViewById(R.id.exitButton)
@@ -147,6 +151,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         bookmarksButton.setOnClickListener { showBookmarksDialog() }
+        prevButton.setOnClickListener { previousBlock() }
+        nextButton.setOnClickListener { nextBlock() }
         themeButton.setOnClickListener { toggleTheme() }
         exitButton.setOnClickListener { finish() }
 
