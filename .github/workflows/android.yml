@@ -24,17 +24,17 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Diagnose GestureDetector / Kotlin
+      - name: Diagnose (triggers transforms, dumps transformed android.jar, wipes caches)
         if: always()
         run: |
-          echo "=== platforms ==="
-          ls "$ANDROID_HOME/platforms"
-          echo "=== GestureDetector.SimpleOnGestureListener ==="
-          javap -classpath "$ANDROID_HOME/platforms/android-35/android.jar" 'android.view.GestureDetector$SimpleOnGestureListener' 2>&1 | grep -E "onFling|onDown" || echo "no match"
-          echo "=== kotlin compiler resolved by gradle ==="
-          gradle -q :app:compileDebugKotlin --info --stacktrace 2>&1 | grep -iE "kotlin compiler|kotlinc-|kotlin-compiler-embeddable|Using Kotlin|compiler.*version|classpath.*android.jar|android.jar" | head -60 || true
-          echo "=== compile classpath ==="
-          gradle -q :app:dependencies --configuration debugCompileClasspath 2>&1 | head -60 || true
+          echo "=== force transform creation ==="
+          gradle -q :app:dependencies --configuration debugCompileClasspath >/dev/null 2>&1 || true
+          echo "=== transformed android.jar GestureDetector ==="
+          find "$HOME/.gradle/caches" -name "android.jar" 2>/dev/null | while read f; do echo "--- $f"; javap -classpath "$f" 'android.view.GestureDetector$SimpleOnGestureListener' 2>&1 | grep -E "onFling|onDown"; done
+          echo "=== WIPING GRADLE BUILD CACHE + KOTLIN INCREMENTAL STATE ==="
+          rm -rf "$HOME/.gradle/caches/build-cache-1" "$HOME/.gradle/caches/build-cache-1.1" "$HOME/.kotlin"
+          find . -type d -name kotlin -path "*build*" -exec rm -rf {} + 2>/dev/null || true
+          echo "caches wiped"
 
       - name: Build Debug APK
         run: gradle :app:assembleDebug
