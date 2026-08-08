@@ -55,7 +55,8 @@ data class Extracted(
     val paragraphs: List<String>,
     val links: List<LinkItem>,
     val title: String?,
-    val image: String?
+    val image: String?,
+    val lang: String = ""
 )
 
 data class SentenceRange(
@@ -111,11 +112,14 @@ class MainActivity : AppCompatActivity() {
     private var ttsReady = false
     private var ttsActive = false
     private var ttsOnline = false
+    private var ttsAvailable: Set<Locale> = emptySet()
     private var mediaPlayer: MediaPlayer? = null
     private var onlineSentences: List<SentenceRange> = emptyList()
     private var onlineSentenceIndex = 0
+    private var onlineFailures = 0
     private var currentSpannable: SpannableString? = null
     private var headerLength = 0
+    private var pageLangCode = ""
 
     private var pendingBackupJson: String = ""
 
@@ -317,6 +321,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun presentArticle(ext: Extracted, url: String) {
         stopTtsOnNewPage()
+        pageLangCode = ext.lang
         currentTitle = ext.title ?: url
         currentLinks = ext.links
         currentImageUrl = ext.image
@@ -400,6 +405,7 @@ class MainActivity : AppCompatActivity() {
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 val avail = try { tts?.getAvailableLanguages() ?: emptySet() } catch (e: Exception) { emptySet() }
+                ttsAvailable = avail
                 val defaultOk = try {
                     val r = tts?.setLanguage(Locale.getDefault())
                     r != TextToSpeech.LANG_MISSING_DATA &&
@@ -472,6 +478,7 @@ class MainActivity : AppCompatActivity() {
         mediaPlayer = null
         onlineSentences = emptyList()
         onlineSentenceIndex = 0
+        onlineFailures = 0
         clearTtsHighlight()
         ttsButton.text = "TTS"
     }
@@ -501,6 +508,7 @@ class MainActivity : AppCompatActivity() {
             currentBlockIndex = index
             renderBlockWithSpannable()
         }
+        applyLocalTtsLang(currentTtsLang())
         tts?.speak(blocks[index], TextToSpeech.QUEUE_FLUSH, null, "block$index")
     }
 
@@ -522,6 +530,7 @@ class MainActivity : AppCompatActivity() {
         }
         onlineSentences = splitSentences(blocks[index])
         onlineSentenceIndex = 0
+        onlineFailures = 0
         runOnUiThread {
             currentBlockIndex = index
             renderBlockWithSpannable()
@@ -557,18 +566,54 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val sentence = onlineSentences[onlineSentenceIndex]
+        speakChunks(sentence, chunkText(sentence.text, 180), 0)
+    }
+
+    private fun chunkText(text: String, maxLen: Int): List<String> {
+        if (text.length <= maxLen) return listOf(text)
+        val chunks = mutableListOf<String>()
+        var start = 0
+        while (start < text.length) {
+            var end = minOf(start + maxLen, text.length)
+            if (end < text.length) {
+                val space = text.lastIndexOf(' ', end)
+                if (space > start + maxLen / 2) end = space
+            }
+            var s = start
+            while (s < text.length && text[s].isWhitespace()) s++
+            var e = end
+            while (e > s && text[e - 1].isWhitespace()) e--
+            if (e > s) chunks.add(text.substring(s, e))
+            start = maxOf(end, s + 1)
+        }
+        return if (chunks.isEmpty()) listOf(text) else chunks
+    }
+
+    private fun speakChunks(sentence: SentenceRange, chunks: List<String>, ci: Int) {
+        if (!ttsActive || !ttsOnline) return
+        if (ci >= chunks.size) {
+            onOnlineSentenceDone()
+            return
+        }
         val index = onlineSentenceIndex
+        val chunk = chunks[ci]
         thread {
             try {
-                val mp3 = fetchOnlineSpeech(sentence.text)
+                Thread.sleep(300)
+                val mp3 = fetchOnlineSpeech(chunk)
                 if (!ttsActive || !ttsOnline) return@thread
                 runOnUiThread { highlightOnlineSentence(index) }
-                playMp3(mp3)
+                playMp3(mp3) { speakChunks(sentence, chunks, ci + 1) }
             } catch (e: Exception) {
                 runOnUiThread {
-                    if (ttsActive) {
-                        stopTts()
-                        toast("Online voice error: ${e.message}")
+                    if (ttsActive && ttsOnline) {
+                        onlineFailures++
+                        if (onlineFailures > 4) {
+                            stopTts()
+                            toast("Online voice error: ${e.message}")
+                        } else {
+                            speakChunks(sentence, chunks, ci + 1)
+                        }
                     }
                 }
             }
@@ -578,10 +623,11 @@ class MainActivity : AppCompatActivity() {
     private fun onOnlineSentenceDone() {
         if (!ttsActive || !ttsOnline) return
         onlineSentenceIndex++
+        onlineFailures = 0
         playOnlineSentence()
     }
 
-    private fun playMp3(bytes: ByteArray) {
+    private fun playMp3(bytes: ByteArray, onDone: () -> Unit) {
         val file = File.createTempFile("tts", ".mp3", cacheDir)
         runOnUiThread {
             if (!ttsActive || !ttsOnline) {
@@ -596,7 +642,7 @@ class MainActivity : AppCompatActivity() {
                 mp.setDataSource(file.absolutePath)
                 mp.setOnCompletionListener {
                     file.delete()
-                    onOnlineSentenceDone()
+                    onDone()
                 }
                 mp.setOnErrorListener { _, _, _ ->
                     file.delete()
@@ -615,27 +661,74 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun fetchOnlineSpeech(text: String): ByteArray {
-        val langs = listOf(ttsLangCode(), "en").distinct()
+        val langs = listOf(currentTtsLang(), "en").distinct()
+        val hosts = listOf(
+            "https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&tl=%s&q=%s",
+            "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=%s&q=%s"
+        )
         var lastError: Exception? = null
         for (lang in langs) {
-            try {
-                val q = URLEncoder.encode(text, "UTF-8")
-                val url = "https://translate.google.com/translate_tts" +
-                    "?ie=UTF-8&client=tw-ob&tl=$lang&q=$q"
-                val conn = URL(url).openConnection() as HttpURLConnection
-                conn.connectTimeout = 10000
-                conn.readTimeout = 15000
-                conn.setRequestProperty("User-Agent", USER_AGENT)
-                conn.setRequestProperty("Referer", "https://translate.google.com/")
-                if (conn.responseCode == 200) {
-                    return conn.inputStream.use { it.readBytes() }
+            for (template in hosts) {
+                try {
+                    val q = URLEncoder.encode(text, "UTF-8")
+                    val url = String.format(template, lang, q)
+                    val conn = URL(url).openConnection() as HttpURLConnection
+                    conn.connectTimeout = 10000
+                    conn.readTimeout = 20000
+                    conn.setRequestProperty("User-Agent", USER_AGENT)
+                    conn.setRequestProperty("Accept", "audio/mpeg")
+                    conn.setRequestProperty("Referer", "https://translate.google.com/")
+                    val code = conn.responseCode
+                    if (code == 200) {
+                        return conn.inputStream.use { it.readBytes() }
+                    }
+                    lastError = IOException("HTTP $code")
+                } catch (e: Exception) {
+                    lastError = e
                 }
-                lastError = IOException("HTTP ${conn.responseCode}")
-            } catch (e: Exception) {
-                lastError = e
             }
         }
         throw lastError ?: IOException("Online voice failed")
+    }
+
+    private fun currentTtsLang(): String {
+        if (pageLangCode.isNotBlank()) return pageLangCode
+        val text = if (currentBlockIndex in blocks.indices) {
+            blocks[currentBlockIndex]
+        } else ""
+        val guess = detectTextLang(text)
+        return guess.ifBlank { ttsLangCode() }
+    }
+
+    private fun applyLocalTtsLang(code: String) {
+        if (tts == null) return
+        val lang = code.lowercase().substringBefore("-")
+        val loc = localeForLang(ttsAvailable, code, lang) ?: return
+        try {
+            val r = tts?.setLanguage(loc)
+            if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                val best = pickBestTtsLocale(ttsAvailable, ttsReady)
+                if (best != null) tts?.setLanguage(best)
+            } else if (detectedLang.isBlank() || detectedLang.startsWith(lang)) {
+                detectedLang = ttsLocaleCode(loc)
+            }
+        } catch (e: Exception) {}
+    }
+
+    private fun localeForLang(avail: Set<Locale>, code: String, lang: String): Locale? {
+        val region = code.substringAfter("-", "").lowercase()
+        if (avail.isNotEmpty()) {
+            return avail.firstOrNull {
+                it.language.equals(lang, true) && region.isNotBlank() &&
+                    it.country.equals(region, true)
+            } ?: avail.firstOrNull { it.language.equals(lang, true) }
+                ?: pickBestTtsLocale(avail, ttsReady)
+        }
+        return try {
+            if (region.length == 2) Locale(lang, region.uppercase()) else Locale(code)
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun pickBestTtsLocale(
@@ -657,6 +750,56 @@ class MainActivity : AppCompatActivity() {
         return if (locale.country.isNotBlank()) {
             "${lang}-${locale.country.lowercase()}"
         } else lang
+    }
+
+    private fun detectTextLang(text: String): String {
+        val t = text.take(2000)
+        fun cnt(re: Regex) = re.findAll(t).count()
+        val cyrillic = cnt(Regex("[\\u0400-\\u04FF]"))
+        val greek = cnt(Regex("[\\u0370-\\u03FF]"))
+        val cjk = cnt(Regex("[\\u4E00-\\u9FFF\\u3400-\\u4DBF]"))
+        val kana = cnt(Regex("[\\u3040-\\u30FF]"))
+        val hangul = cnt(Regex("[\\uAC00-\\uD7AF]"))
+        val arabic = cnt(Regex("[\\u0600-\\u06FF]"))
+        val hebrew = cnt(Regex("[\\u0590-\\u05FF]"))
+        val devanagari = cnt(Regex("[\\u0900-\\u097F]"))
+        val thai = cnt(Regex("[\\u0E00-\\u0E7F]"))
+        val scripts = cyrillic + greek + cjk + kana + hangul + arabic + hebrew + devanagari + thai
+        if (scripts > 5) {
+            return when {
+                kana > 0 -> "ja"
+                hangul > 0 -> "ko"
+                cjk > 0 -> "zh"
+                cyrillic > 0 -> "ru"
+                greek > 0 -> "el"
+                arabic > 0 -> "ar"
+                hebrew > 0 -> "he"
+                devanagari > 0 -> "hi"
+                thai > 0 -> "th"
+                else -> "en"
+            }
+        }
+        val lower = t.lowercase()
+        val stops = mapOf(
+            "en" to listOf("the", "and", "that", "with", "this", "you", "for", "are", "was", "have"),
+            "es" to listOf("que", "de", "la", "el", "y", "los", "las", "una", "para", "con"),
+            "fr" to listOf("les", "des", "que", "une", "pour", "avec", "dans", "est", "sur", "pas"),
+            "de" to listOf("der", "die", "und", "das", "ist", "mit", "nicht", "ein", "eine", "fur"),
+            "it" to listOf("che", "per", "con", "una", "non", "alla", "sono", "come", "piu", "dell"),
+            "pt" to listOf("que", "uma", "para", "com", "dos", "das", "nao", "sao", "mais", "como"),
+            "nl" to listOf("van", "het", "een", "voor", "niet", "met", "zijn", "als", "ook", "aan"),
+            "pl" to listOf("nie", "na", "z", "to", "sie", "jest", "w", "do", "jest", "i")
+        )
+        var best = ""
+        var bestScore = -1
+        for ((lang, words) in stops) {
+            val score = words.count { w -> Regex("\\b$w\\b").containsMatchIn(lower) }
+            if (score > bestScore) {
+                bestScore = score
+                best = lang
+            }
+        }
+        return if (bestScore >= 2) best else ""
     }
 
     private fun ttsLangCode(): String {
@@ -1051,6 +1194,7 @@ class MainActivity : AppCompatActivity() {
     private fun extractSinglePage(html: String, base: String): Extracted {
         val doc = Jsoup.parse(html, base)
         doc.select("script, style, nav, footer, header, form, aside").remove()
+        val lang = normalizeLang(doc.select("html[lang]").first()?.attr("lang"))
 
         val preBlocks = doc.select("pre")
         if (preBlocks.isNotEmpty()) {
@@ -1067,7 +1211,7 @@ class MainActivity : AppCompatActivity() {
                     if (t.length > 20) paragraphs.add(t)
                 }
             }
-            return Extracted(paragraphs, collectLinks(doc, base), extractTitle(doc), fetchMainImage(doc, base))
+            return Extracted(paragraphs, collectLinks(doc, base), extractTitle(doc), fetchMainImage(doc, base), lang)
         }
 
         var main: Element = doc.body() ?: doc
@@ -1086,7 +1230,17 @@ class MainActivity : AppCompatActivity() {
             if (t.length > 20) paragraphs.add(t)
         }
 
-        return Extracted(paragraphs, collectLinks(main, base), extractTitle(doc), fetchMainImage(doc, base))
+        return Extracted(paragraphs, collectLinks(main, base), extractTitle(doc), fetchMainImage(doc, base), lang)
+    }
+
+    private fun normalizeLang(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        var s = raw.trim().lowercase()
+        val comma = s.indexOf(',')
+        if (comma > 0) s = s.substring(0, comma).trim()
+        val m = Regex("^([a-z]{2,3})([-_][a-z0-9]{2,4})?").find(s)
+        if (m == null) return ""
+        return m.value.lowercase().replace("_", "-")
     }
 
     private fun collectLinks(root: Element, base: String): List<LinkItem> {
@@ -1483,8 +1637,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun langDisplay(): String {
-        val code = ttsLangCode()
-        return if (ttsReady) "$code (auto)" else "$code (system)"
+        val code = currentTtsLang()
+        return when {
+            pageLangCode.isNotBlank() -> "$code (page)"
+            ttsReady -> "$code (auto)"
+            else -> "$code (system)"
+        }
     }
 
     private fun speedLabel(): String =
