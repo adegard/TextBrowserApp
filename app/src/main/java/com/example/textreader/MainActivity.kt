@@ -99,6 +99,8 @@ class MainActivity : AppCompatActivity() {
     private var showPageNumber = true
     private var showCompactUrl = true
     private var ttsMode = "auto"
+    private var ttsSpeed = 1.0f
+    private var detectedLang = ""
 
     @Volatile
     private var loadGeneration = 0
@@ -214,10 +216,11 @@ class MainActivity : AppCompatActivity() {
             popup.menu.add(0, 6, 5, "Share link")
             popup.menu.add(0, 7, 6, "Ask AI")
             popup.menu.add(0, 8, 7, "Save bookmark")
-            popup.menu.add(0, 9, 8, "A+ bigger text")
-            popup.menu.add(0, 10, 9, "A− smaller text")
-            popup.menu.add(0, 11, 10, "Toggle theme")
-            popup.menu.add(0, 12, 11, "Exit")
+            popup.menu.add(0, 13, 8, "Remove bookmark")
+            popup.menu.add(0, 9, 9, "A+ bigger text")
+            popup.menu.add(0, 10, 10, "A− smaller text")
+            popup.menu.add(0, 11, 11, "Toggle theme")
+            popup.menu.add(0, 12, 12, "Exit")
             popup.setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> showHome()
@@ -231,6 +234,7 @@ class MainActivity : AppCompatActivity() {
                         addOrUpdateBookmark()
                         toast("Bookmark saved")
                     }
+                    13 -> removeCurrentBookmark()
                     9 -> changeTextSize(2f)
                     10 -> changeTextSize(-2f)
                     11 -> toggleTheme()
@@ -395,10 +399,22 @@ class MainActivity : AppCompatActivity() {
     private fun initTts() {
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                val result = tts?.setLanguage(Locale.getDefault())
-                ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
-                    result != TextToSpeech.LANG_NOT_SUPPORTED
+                val avail = try { tts?.getAvailableLanguages() ?: emptySet() } catch (e: Exception) { emptySet() }
+                val defaultOk = try {
+                    val r = tts?.setLanguage(Locale.getDefault())
+                    r != TextToSpeech.LANG_MISSING_DATA &&
+                        r != TextToSpeech.LANG_NOT_SUPPORTED
+                } catch (e: Exception) {
+                    false
+                }
+                ttsReady = defaultOk || avail.isNotEmpty()
                 if (ttsReady) {
+                    val chosen = pickBestTtsLocale(avail, defaultOk)
+                    if (chosen != null) {
+                        try { tts?.language = chosen } catch (e: Exception) {}
+                        detectedLang = ttsLocaleCode(chosen)
+                    }
+                    try { tts?.setSpeechRate(ttsSpeed) } catch (e: Exception) {}
                     tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {}
                         override fun onDone(utteranceId: String?) {
@@ -622,9 +638,30 @@ class MainActivity : AppCompatActivity() {
         throw lastError ?: IOException("Online voice failed")
     }
 
+    private fun pickBestTtsLocale(
+        avail: Set<Locale>,
+        defaultOk: Boolean
+    ): Locale? {
+        if (avail.isNotEmpty()) {
+            val def = Locale.getDefault()
+            return avail.firstOrNull { it.language == def.language && it.country == def.country }
+                ?: avail.firstOrNull { it.language == def.language }
+                ?: avail.firstOrNull { it.language == "en" }
+                ?: avail.firstOrNull()
+        }
+        return if (defaultOk) Locale.getDefault() else null
+    }
+
+    private fun ttsLocaleCode(locale: Locale): String {
+        val lang = locale.language.lowercase()
+        return if (locale.country.isNotBlank()) {
+            "${lang}-${locale.country.lowercase()}"
+        } else lang
+    }
+
     private fun ttsLangCode(): String {
-        val l = Locale.getDefault().language.lowercase()
-        return if (l.length == 2 && l.isNotBlank()) l else "en"
+        if (detectedLang.isNotBlank()) return detectedLang
+        return ttsLocaleCode(Locale.getDefault())
     }
 
     private fun highlightOnlineSentence(index: Int) {
@@ -1311,6 +1348,7 @@ class MainActivity : AppCompatActivity() {
         showPageNumber = p.getBoolean("show_page_number", true)
         showCompactUrl = p.getBoolean("show_compact_url", true)
         ttsMode = p.getString("tts_mode", "auto") ?: "auto"
+        ttsSpeed = p.getFloat("tts_speed", 1.0f)
     }
 
     private fun savePrefs() {
@@ -1327,6 +1365,7 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("show_page_number", showPageNumber)
             .putBoolean("show_compact_url", showCompactUrl)
             .putString("tts_mode", ttsMode)
+            .putFloat("tts_speed", ttsSpeed)
             .apply()
     }
 
@@ -1362,6 +1401,8 @@ class MainActivity : AppCompatActivity() {
             "Show page number: ${if (showPageNumber) "on" else "off"}",
             "Show compact URL: ${if (showCompactUrl) "on" else "off"}",
             "Voice: ${ttsModeLabel()}",
+            "Voice language: ${langDisplay()}",
+            "Voice speed: ${speedLabel()}",
             "Export data (settings + bookmarks + history)",
             "Import data from backup"
         )
@@ -1395,8 +1436,9 @@ class MainActivity : AppCompatActivity() {
                         renderBlock()
                     }
                     10 -> pickTtsMode()
-                    11 -> exportData()
-                    12 -> importData()
+                    11 -> pickTtsSpeed()
+                    12 -> exportData()
+                    13 -> importData()
                 }
             }
             .setNegativeButton("Close", null)
@@ -1430,6 +1472,31 @@ class MainActivity : AppCompatActivity() {
                     else -> "auto"
                 }
                 savePrefs()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun langDisplay(): String {
+        val code = ttsLangCode()
+        return if (ttsReady) "$code (auto)" else "$code (system)"
+    }
+
+    private fun speedLabel(): String =
+        if (ttsSpeed == 1.0f) "1.0× (normal)" else "${ttsSpeed}×"
+
+    private fun pickTtsSpeed() {
+        val speeds = arrayOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+        val labels = speeds.map {
+            if (it == 1.0f) "1.0× (normal)" else "${it}×"
+        }.toTypedArray()
+        val current = speeds.indexOfFirst { it == ttsSpeed }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("Voice speed (offline engine)")
+            .setSingleChoiceItems(labels, current) { _, which ->
+                ttsSpeed = speeds[which]
+                savePrefs()
+                try { tts?.setSpeechRate(ttsSpeed) } catch (e: Exception) {}
             }
             .setNegativeButton("Close", null)
             .show()
@@ -1496,6 +1563,7 @@ class MainActivity : AppCompatActivity() {
             .put("show_page_number", showPageNumber)
             .put("show_compact_url", showCompactUrl)
             .put("tts_mode", ttsMode)
+            .put("tts_speed", ttsSpeed.toDouble())
         val bms = JSONArray()
         for (b in loadBookmarks()) {
             bms.put(JSONObject().put("title", b.title).put("url", b.url).put("block", b.blockIndex))
@@ -1529,6 +1597,8 @@ class MainActivity : AppCompatActivity() {
             showPageNumber = s.optBoolean("show_page_number", showPageNumber)
             showCompactUrl = s.optBoolean("show_compact_url", showCompactUrl)
             ttsMode = s.optString("tts_mode", ttsMode)
+            ttsSpeed = s.optDouble("tts_speed", ttsSpeed.toDouble()).toFloat()
+            try { tts?.setSpeechRate(ttsSpeed) } catch (e: Exception) {}
             savePrefs()
             applyTheme()
             contentView.textSize = textSize
@@ -1659,6 +1729,14 @@ class MainActivity : AppCompatActivity() {
         saveBookmarks(list)
     }
 
+    private fun removeCurrentBookmark() {
+        val url = currentUrl ?: return
+        val list = loadBookmarks()
+        val before = list.size
+        saveBookmarks(list.filterNot { it.url == url })
+        toast(if (list.size != before) "Bookmark removed" else "No bookmark for this page")
+    }
+
     private fun showBookmarksDialog() {
         val list = loadBookmarks()
         if (list.isEmpty()) {
@@ -1679,7 +1757,35 @@ class MainActivity : AppCompatActivity() {
                 currentBlockIndex = bm.blockIndex
             }
             .setPositiveButton("Add current") { _, _ -> addOrUpdateBookmark() }
+            .setNeutralButton("Remove…") { _, _ -> showRemoveBookmarksDialog() }
             .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun showRemoveBookmarksDialog() {
+        val list = loadBookmarks()
+        if (list.isEmpty()) {
+            toast("No bookmarks to remove")
+            return
+        }
+        val titles = list.map { it.title }.toTypedArray()
+        val checked = BooleanArray(list.size)
+        AlertDialog.Builder(this)
+            .setTitle("Remove bookmarks")
+            .setMultiChoiceItems(titles, checked) { _, i, isChecked -> checked[i] = isChecked }
+            .setPositiveButton("Remove selected") { _, _ ->
+                val toRemove = list.indices
+                    .filter { checked[it] }
+                    .map { list[it].url }
+                    .toSet()
+                if (toRemove.isEmpty()) {
+                    toast("Nothing selected")
+                    return@setPositiveButton
+                }
+                saveBookmarks(loadBookmarks().filterNot { it.url in toRemove })
+                toast("Removed ${toRemove.size} bookmark(s)")
+            }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 
