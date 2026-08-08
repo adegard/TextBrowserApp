@@ -1,6 +1,6 @@
 # TextReader
 
-A lightweight text-mode browser for Android. It fetches web pages and PDFs and shows them as clean, readable text — no rendering engine, no ads, no clutter. A mobile port of the terminal browser `text_browser.py`.
+A lightweight text-mode browser for Android. It fetches web pages and PDFs and shows them as clean, readable text — no rendering engine, no ads, no clutter. A mobile port of the terminal browser `text_browser.py` : https://github.com/adegard/terminal_text_browser
 
 ![TextReader screenshot](screenshot.png)
 
