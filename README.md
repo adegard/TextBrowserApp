@@ -20,7 +20,8 @@ Download `app-debug.apk` and open it on your phone to install (you may need to a
 
 - **Search** — 5 search engines: DuckDuckGo Lite, DuckDuckGo HTML, Brave, Bing, and Google (text mode). Every engine falls back to DuckDuckGo Lite if it returns nothing.
 - **Article reader** — extracts the main text from any web page (largest-content heuristic), along with its links, title and image. Unreadable clutter (scripts, nav, ads) is removed.
-- **PDF reading** — open any `.pdf` URL and read its text, page by page, with the title taken from the document metadata.
+- **PDF reading** — open any `.pdf` URL and read its text, page by page, with the title taken from the document metadata. Parsed text is cached so revisiting a PDF loads instantly (cache is kept only for bookmarked PDFs).
+- **Progress indicator** — a thin bar shows while pages, PDFs or searches are loading.
 - **Block navigation** — text is split into blocks; turn pages by swiping left/right or with the ◀ ▶ buttons. Multi-page articles (`/page/N`) load the next part automatically at the end.
 - **Vertical scroll** — when a block is taller than the screen, drag to scroll (a scrollbar appears on the side).
 - **Bookmarks** — save the current position of any page and resume exactly where you left off. Remove them via ⋮ → *Remove bookmark* or the *Remove…* button in the bookmarks list.

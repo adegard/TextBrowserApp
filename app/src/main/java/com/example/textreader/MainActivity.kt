@@ -15,6 +15,7 @@ import android.text.Spanned
 import android.text.style.BackgroundColorSpan
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
@@ -40,6 +41,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.security.MessageDigest
 import java.util.Locale
 
 data class Bookmark(
@@ -79,6 +81,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ttsButton: Button
     private lateinit var menuButton: ImageButton
     private lateinit var cancelButton: ImageButton
+    private lateinit var progressBar: android.widget.ProgressBar
 
     private lateinit var gestureDetector: GestureDetectorCompat
 
@@ -150,6 +153,7 @@ class MainActivity : AppCompatActivity() {
         menuButton = findViewById(R.id.menuButton)
         cancelButton = findViewById(R.id.cancelButton)
         ttsButton = findViewById(R.id.ttsButton)
+        progressBar = findViewById(R.id.progressBar)
 
         loadPrefs()
 
@@ -204,6 +208,8 @@ class MainActivity : AppCompatActivity() {
         setupMenu()
 
         initTts()
+
+        cleanPdfCache()
 
         applyTheme()
         showHome()
@@ -295,6 +301,7 @@ class MainActivity : AppCompatActivity() {
     private fun loadUrl(url: String) {
         val gen = ++loadGeneration
         currentUrl = url
+        setLoading(true)
         showMessage("Loading…")
         thread {
             try {
@@ -323,6 +330,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun presentArticle(ext: Extracted, url: String) {
         stopTtsOnNewPage()
+        setLoading(false)
         pageLangCode = ext.lang
         currentTitle = ext.title ?: url
         currentLinks = ext.links
@@ -900,6 +908,7 @@ class MainActivity : AppCompatActivity() {
     private fun tryLoadNextPart() {
         val base = currentUrl ?: return
         val current = rawParagraphs
+        setLoading(true)
         thread {
             try {
                 val m = Regex("/page/(\\d+)").find(base)
@@ -914,10 +923,14 @@ class MainActivity : AppCompatActivity() {
                 val existing = current.toSet()
                 val added = ext.paragraphs.filter { it !in existing }
                 if (added.isEmpty()) {
-                    runOnUiThread { toast("You've reached the end.") }
+                    runOnUiThread {
+                        setLoading(false)
+                        toast("You've reached the end.")
+                    }
                     return@thread
                 }
                 runOnUiThread {
+                    setLoading(false)
                     rawParagraphs = rawParagraphs + added
                     currentTitle = ext.title ?: currentTitle
                     val startAt = rawParagraphs.size - added.size
@@ -929,7 +942,10 @@ class MainActivity : AppCompatActivity() {
                     toast("Loaded next part (${added.size} more paragraphs)")
                 }
             } catch (_: Exception) {
-                runOnUiThread { toast("You've reached the end.") }
+                runOnUiThread {
+                    setLoading(false)
+                    toast("You've reached the end.")
+                }
             }
         }
     }
@@ -938,6 +954,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun searchAndSelect(query: String) {
         val gen = ++loadGeneration
+        setLoading(true)
         showMessage("Searching ${engineNames[searchEngine]}…")
         thread {
             try {
@@ -1083,6 +1100,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun feelingLucky(q: String) {
         val gen = ++loadGeneration
+        setLoading(true)
         showMessage("I'm feeling lucky…")
         thread {
             try {
@@ -1297,6 +1315,14 @@ class MainActivity : AppCompatActivity() {
     // ========= PDF =========
 
     private fun loadPdfInternal(url: String, gen: Int) {
+        val cached = readPdfCache(url)
+        if (cached != null) {
+            runOnUiThread {
+                if (gen != loadGeneration) return@runOnUiThread
+                presentArticle(Extracted(cached.paragraphs, emptyList(), cached.title, null, cached.lang), url)
+            }
+            return
+        }
         try {
             PDFBoxResourceLoader.init(applicationContext)
             val file = File.createTempFile("tbrowser", ".pdf", cacheDir)
@@ -1337,6 +1363,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     return
                 }
+                writePdfCache(url, title, paragraphs)
                 val ext = Extracted(paragraphs, emptyList(), title, null)
                 runOnUiThread {
                     if (gen != loadGeneration) return@runOnUiThread
@@ -1350,6 +1377,73 @@ class MainActivity : AppCompatActivity() {
                 if (gen != loadGeneration) return@runOnUiThread
                 showMessage("PDF error: ${e.message}")
             }
+        }
+    }
+
+    // ========= PDF CACHE =========
+
+    private data class PdfCache(
+        val title: String?,
+        val paragraphs: List<String>,
+        val lang: String,
+        val url: String
+    )
+
+    private fun pdfCacheDir(): File =
+        File(filesDir, "pdf_cache").apply { if (!exists()) mkdirs() }
+
+    private fun pdfCacheKey(url: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(url.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun readPdfCache(url: String): PdfCache? {
+        return try {
+            val file = File(pdfCacheDir(), pdfCacheKey(url) + ".json")
+            if (!file.exists()) return null
+            val root = JSONObject(file.readText())
+            val arr = root.optJSONArray("paragraphs") ?: return null
+            val paragraphs = (0 until arr.length()).map { arr.getString(it) }
+            PdfCache(
+                root.optString("title", "").ifBlank { null },
+                paragraphs,
+                root.optString("lang", ""),
+                root.optString("url", url)
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun writePdfCache(url: String, title: String?, paragraphs: List<String>, lang: String = "") {
+        try {
+            val file = File(pdfCacheDir(), pdfCacheKey(url) + ".json")
+            val obj = JSONObject()
+                .put("url", url)
+                .put("title", title ?: "")
+                .put("lang", lang)
+                .put("paragraphs", JSONArray(paragraphs))
+            file.writeText(obj.toString())
+        } catch (e: Exception) {}
+    }
+
+    private fun cleanPdfCache() {
+        thread {
+            try {
+                val bookmarked = loadBookmarks().map { it.url }.toSet()
+                val dir = pdfCacheDir()
+                for (f in dir.listFiles() ?: return@thread) {
+                    if (f.name.endsWith(".json")) {
+                        val keep = try {
+                            JSONObject(f.readText()).optString("url", "") in bookmarked
+                        } catch (e: Exception) {
+                            false
+                        }
+                        if (!keep) f.delete()
+                    }
+                }
+            } catch (e: Exception) {}
         }
     }
 
@@ -1377,6 +1471,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun doAiRequest(prompt: String) {
+        setLoading(true)
         showMessage("Asking AI…")
         thread {
             val answer = aiQuery(prompt)
@@ -1992,10 +2087,17 @@ class MainActivity : AppCompatActivity() {
 
     // ========= MISC =========
 
+    private fun setLoading(on: Boolean) {
+        runOnUiThread {
+            progressBar.visibility = if (on) View.VISIBLE else View.GONE
+        }
+    }
+
     private fun showMessage(msg: String) {
         contentView.text = msg
         blocks = listOf(msg)
         currentBlockIndex = 0
+        setLoading(false)
     }
 
     private fun toast(msg: String) {
