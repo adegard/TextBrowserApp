@@ -22,6 +22,9 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:maxLines="1"
+            android:inputType="textUri"
+            android:imeOptions="actionGo"
             android:hint="URL or search query" />
 
         <Button
@@ -29,6 +32,15 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Go" />
+
+        <ImageButton
+            android:id="@+id/cancelButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:contentDescription="Cancel loading"
+            android:padding="8dp"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:background="?android:attr/selectableItemBackgroundBorderless" />
 
         <ImageButton
             android:id="@+id/menuButton"

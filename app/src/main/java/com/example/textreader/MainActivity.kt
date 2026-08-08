@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var themeButton: Button
     private lateinit var exitButton: Button
     private lateinit var menuButton: ImageButton
+    private lateinit var cancelButton: ImageButton
 
     private lateinit var gestureDetector: GestureDetectorCompat
 
@@ -79,6 +80,15 @@ class MainActivity : AppCompatActivity() {
     private var maxChars = 2000
     private var chronologyLength = 5
     private var groqKey = ""
+    private var textSize = 16f
+    private var showTitle = true
+    private var showPageNumber = true
+    private var showCompactUrl = true
+
+    @Volatile
+    private var loadGeneration = 0
+    @Volatile
+    private var activeConnection: HttpURLConnection? = null
 
     private var searchResults: List<Pair<String, String>> = emptyList()
     private var searchOffset = 0
@@ -105,6 +115,7 @@ class MainActivity : AppCompatActivity() {
         themeButton = findViewById(R.id.themeButton)
         exitButton = findViewById(R.id.exitButton)
         menuButton = findViewById(R.id.menuButton)
+        cancelButton = findViewById(R.id.cancelButton)
 
         loadPrefs()
 
@@ -153,6 +164,7 @@ class MainActivity : AppCompatActivity() {
         bookmarksButton.setOnClickListener { showBookmarksDialog() }
         prevButton.setOnClickListener { previousBlock() }
         nextButton.setOnClickListener { nextBlock() }
+        cancelButton.setOnClickListener { cancelLoad() }
         themeButton.setOnClickListener { toggleTheme() }
         exitButton.setOnClickListener { finish() }
 
@@ -175,6 +187,8 @@ class MainActivity : AppCompatActivity() {
             popup.menu.add(0, 6, 5, "Share link")
             popup.menu.add(0, 7, 6, "Ask AI")
             popup.menu.add(0, 8, 7, "Save bookmark")
+            popup.menu.add(0, 9, 8, "A+ bigger text")
+            popup.menu.add(0, 10, 9, "A− smaller text")
             popup.setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> showHome()
@@ -188,6 +202,8 @@ class MainActivity : AppCompatActivity() {
                         addOrUpdateBookmark()
                         toast("Bookmark saved")
                     }
+                    9 -> changeTextSize(2f)
+                    10 -> changeTextSize(-2f)
                 }
                 true
             }
@@ -243,21 +259,30 @@ class MainActivity : AppCompatActivity() {
     // ========= LOAD / PRESENT =========
 
     private fun loadUrl(url: String) {
+        val gen = ++loadGeneration
         currentUrl = url
         showMessage("Loading…")
         thread {
             try {
                 val resolved = resolveRedirect(url)
+                if (gen != loadGeneration) return@thread
                 currentUrl = resolved
                 if (resolved.lowercase().endsWith(".pdf")) {
-                    loadPdfInternal(resolved)
+                    loadPdfInternal(resolved, gen)
                 } else {
                     val html = httpGet(resolved)
+                    if (gen != loadGeneration) return@thread
                     val ext = extractSinglePage(html, resolved)
-                    runOnUiThread { presentArticle(ext, resolved) }
+                    runOnUiThread {
+                        if (gen != loadGeneration) return@runOnUiThread
+                        presentArticle(ext, resolved)
+                    }
                 }
             } catch (e: Exception) {
-                runOnUiThread { showMessage("Error: ${e.message}") }
+                runOnUiThread {
+                    if (gen != loadGeneration) return@runOnUiThread
+                    showMessage("Error: ${e.message}")
+                }
             }
         }
     }
@@ -301,9 +326,38 @@ class MainActivity : AppCompatActivity() {
     private fun renderBlock() {
         if (blocks.isEmpty()) return
         val body = blocks[currentBlockIndex]
-        val remaining = blocks.size - currentBlockIndex - 1
-        val header = "▌$currentTitle\n— Block ${currentBlockIndex + 1}/${blocks.size} · $remaining left —\n\n"
+        val lines = mutableListOf<String>()
+        if (showTitle && currentTitle.isNotEmpty()) lines.add("▌$currentTitle")
+        if (showCompactUrl && !currentUrl.isNullOrBlank()) {
+            lines.add("🔗 ${shortenMiddle(currentUrl!!, 44)}")
+        }
+        if (showPageNumber) {
+            val remaining = blocks.size - currentBlockIndex - 1
+            lines.add("— Block ${currentBlockIndex + 1}/${blocks.size} · $remaining left —")
+        }
+        val header = if (lines.isEmpty()) "" else lines.joinToString("\n") + "\n\n"
         contentView.text = header + body
+    }
+
+    private fun shortenMiddle(text: String, maxLen: Int): String {
+        if (text.length <= maxLen) return text
+        if (maxLen < 10) return text.take(maxLen)
+        val keep = (maxLen - 3) / 2
+        return text.take(keep) + "…" + text.takeLast(keep)
+    }
+
+    private fun changeTextSize(delta: Float) {
+        textSize = (textSize + delta).coerceIn(10f, 28f)
+        savePrefs()
+        contentView.textSize = textSize
+        toast("Text size: ${textSize.toInt()}sp")
+    }
+
+    private fun cancelLoad() {
+        loadGeneration++
+        activeConnection?.disconnect()
+        activeConnection = null
+        showMessage("Loading cancelled.")
     }
 
     private fun nextBlock() {
@@ -364,11 +418,13 @@ class MainActivity : AppCompatActivity() {
     // ========= SEARCH =========
 
     private fun searchAndSelect(query: String) {
+        val gen = ++loadGeneration
         showMessage("Searching ${engineNames[searchEngine]}…")
         thread {
             try {
                 val results = search(query)
                 runOnUiThread {
+                    if (gen != loadGeneration) return@runOnUiThread
                     if (results.isEmpty()) showMessage("No results.")
                     else {
                         searchResults = results
@@ -377,7 +433,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {
-                runOnUiThread { showMessage("Error: ${e.message}") }
+                runOnUiThread {
+                    if (gen != loadGeneration) return@runOnUiThread
+                    showMessage("Error: ${e.message}")
+                }
             }
         }
     }
@@ -504,21 +563,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun feelingLucky(q: String) {
+        val gen = ++loadGeneration
         showMessage("I'm feeling lucky…")
         thread {
             try {
                 val results = search(q)
                 if (results.isEmpty()) {
-                    runOnUiThread { showMessage("No results.") }
+                    runOnUiThread {
+                        if (gen != loadGeneration) return@runOnUiThread
+                        showMessage("No results.")
+                    }
                 } else {
                     val url = results.first().second
                     runOnUiThread {
+                        if (gen != loadGeneration) return@runOnUiThread
                         urlInput.setText(url)
                         loadUrl(url)
                     }
                 }
             } catch (e: Exception) {
-                runOnUiThread { showMessage("Error: ${e.message}") }
+                runOnUiThread {
+                    if (gen != loadGeneration) return@runOnUiThread
+                    showMessage("Error: ${e.message}")
+                }
             }
         }
     }
@@ -549,7 +616,12 @@ class MainActivity : AppCompatActivity() {
         conn.readTimeout = 20000
         conn.requestMethod = "GET"
         conn.setRequestProperty("User-Agent", USER_AGENT)
-        return conn.inputStream.bufferedReader().readText()
+        activeConnection = conn
+        return try {
+            conn.inputStream.bufferedReader().readText()
+        } finally {
+            if (activeConnection === conn) activeConnection = null
+        }
     }
 
     private fun unwrapDuckduckgoRedirect(url: String): String {
@@ -694,7 +766,7 @@ class MainActivity : AppCompatActivity() {
 
     // ========= PDF =========
 
-    private fun loadPdfInternal(url: String) {
+    private fun loadPdfInternal(url: String, gen: Int) {
         try {
             PDFBoxResourceLoader.init(applicationContext)
             val file = File.createTempFile("tbrowser", ".pdf", cacheDir)
@@ -703,9 +775,15 @@ class MainActivity : AppCompatActivity() {
                 conn.connectTimeout = 10000
                 conn.readTimeout = 20000
                 conn.setRequestProperty("User-Agent", USER_AGENT)
-                conn.inputStream.use { input ->
-                    file.outputStream().use { out -> input.copyTo(out) }
+                activeConnection = conn
+                try {
+                    conn.inputStream.use { input ->
+                        file.outputStream().use { out -> input.copyTo(out) }
+                    }
+                } finally {
+                    if (activeConnection === conn) activeConnection = null
                 }
+                if (gen != loadGeneration) return
 
                 val paragraphs = mutableListOf<String>()
                 var title: String? = null
@@ -723,16 +801,25 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 if (paragraphs.isEmpty()) {
-                    runOnUiThread { showMessage("[PDF contains no extractable text]") }
+                    runOnUiThread {
+                        if (gen != loadGeneration) return@runOnUiThread
+                        showMessage("[PDF contains no extractable text]")
+                    }
                     return
                 }
                 val ext = Extracted(paragraphs, emptyList(), title, null)
-                runOnUiThread { presentArticle(ext, url) }
+                runOnUiThread {
+                    if (gen != loadGeneration) return@runOnUiThread
+                    presentArticle(ext, url)
+                }
             } finally {
                 file.delete()
             }
         } catch (e: Exception) {
-            runOnUiThread { showMessage("PDF error: ${e.message}") }
+            runOnUiThread {
+                if (gen != loadGeneration) return@runOnUiThread
+                showMessage("PDF error: ${e.message}")
+            }
         }
     }
 
@@ -809,7 +896,7 @@ class MainActivity : AppCompatActivity() {
     private fun showAiResult(answer: String) {
         val tv = TextView(this)
         tv.setTextColor(if (isNight) getColor(R.color.nightText) else getColor(R.color.dayText))
-        tv.textSize = 15f
+        tv.textSize = textSize
         tv.setTextIsSelectable(true)
         tv.setPadding(dp(16), dp(16), dp(16), dp(16))
         AlertDialog.Builder(this)
@@ -889,6 +976,10 @@ class MainActivity : AppCompatActivity() {
         chronologyLength = p.getInt("chronology_length", 5)
         groqKey = p.getString("groq_key", "") ?: ""
         isNight = p.getBoolean("night", false)
+        textSize = p.getFloat("text_size", 16f)
+        showTitle = p.getBoolean("show_title", true)
+        showPageNumber = p.getBoolean("show_page_number", true)
+        showCompactUrl = p.getBoolean("show_compact_url", true)
     }
 
     private fun savePrefs() {
@@ -900,6 +991,10 @@ class MainActivity : AppCompatActivity() {
             .putInt("chronology_length", chronologyLength)
             .putString("groq_key", groqKey)
             .putBoolean("night", isNight)
+            .putFloat("text_size", textSize)
+            .putBoolean("show_title", showTitle)
+            .putBoolean("show_page_number", showPageNumber)
+            .putBoolean("show_compact_url", showCompactUrl)
             .apply()
     }
 
@@ -929,7 +1024,11 @@ class MainActivity : AppCompatActivity() {
             "Paragraphs per page: $parasPerPage",
             "Max chars per block: $maxChars",
             "Groq API key: ${if (groqKey.isBlank()) "NOT SET" else "SET"}",
-            "Chronology length: $chronologyLength"
+            "Chronology length: $chronologyLength",
+            "Text size: ${textSize.toInt()}sp",
+            "Show page title: ${if (showTitle) "on" else "off"}",
+            "Show page number: ${if (showPageNumber) "on" else "off"}",
+            "Show compact URL: ${if (showCompactUrl) "on" else "off"}"
         )
         AlertDialog.Builder(this)
             .setTitle("Settings")
@@ -941,6 +1040,25 @@ class MainActivity : AppCompatActivity() {
                     3 -> askInt("Max chars per block", maxChars, 500, 10000) { maxChars = it }
                     4 -> askGroqKey()
                     5 -> askInt("Chronology length", chronologyLength, 3, 50) { chronologyLength = it }
+                    6 -> askInt("Text size (sp)", textSize.toInt(), 10, 28) {
+                        textSize = it.toFloat()
+                        contentView.textSize = textSize
+                    }
+                    7 -> {
+                        showTitle = !showTitle
+                        savePrefs()
+                        renderBlock()
+                    }
+                    8 -> {
+                        showPageNumber = !showPageNumber
+                        savePrefs()
+                        renderBlock()
+                    }
+                    9 -> {
+                        showCompactUrl = !showCompactUrl
+                        savePrefs()
+                        renderBlock()
+                    }
                 }
             }
             .setNegativeButton("Close", null)
@@ -1012,6 +1130,7 @@ class MainActivity : AppCompatActivity() {
         val fg = if (isNight) getColor(R.color.nightText) else getColor(R.color.dayText)
         rootLayout.setBackgroundColor(bg)
         contentView.setTextColor(fg)
+        contentView.textSize = textSize
         urlInput.setTextColor(fg)
         urlInput.setHintTextColor(fg and 0x55FFFFFF.toInt())
     }
