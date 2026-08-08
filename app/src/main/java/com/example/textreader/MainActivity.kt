@@ -1045,12 +1045,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun searchBing(q: String): List<Pair<String, String>> {
-        val doc = fetchDoc("https://www.bing.com/search?q=${urlencode(q)}&form=MSNVS")
         val results = mutableListOf<Pair<String, String>>()
-        for (a in doc.select("li.b_algo h2 a")) {
-            val title = a.text().trim()
-            val href = unwrapGenericRedirect(a.attr("href"))
-            if (title.isNotEmpty() && !isAdOrTracker(href)) results.add(title to href)
+        for (first in listOf(1, 11)) {
+            val doc = fetchDoc("https://www.bing.com/search?q=${urlencode(q)}&form=MSNVS&first=$first")
+            for (a in doc.select("li.b_algo h2 a")) {
+                val title = a.text().trim()
+                val href = unwrapGenericRedirect(a.attr("href"))
+                if (title.isNotEmpty() && !isAdOrTracker(href) && results.none { it.second == href }) {
+                    results.add(title to href)
+                }
+            }
         }
         return results
     }
@@ -1061,7 +1065,7 @@ class MainActivity : AppCompatActivity() {
             val doc = fetchDoc("https://textise.net/showtext.aspx?strURL=${urlencode(target)}")
             val results = mutableListOf<Pair<String, String>>()
             for (a in doc.select("a[href]")) {
-                val href = a.attr("abs:href")
+                val href = unwrapGenericRedirect(a.attr("abs:href"))
                 if (href.isEmpty() || "http" !in href) continue
                 val title = a.text().trim()
                 if (title.isNotEmpty() && !isAdOrTracker(href)) results.add(title to href)
@@ -1207,8 +1211,63 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun unwrapGenericRedirect(url: String): String =
-        stripDuckduckgoTracking(unwrapDuckduckgoRedirect(url))
+    private fun unwrapGenericRedirect(url: String): String {
+        var u = url.trim()
+        u = org.jsoup.parser.Parser.unescapeEntities(u, false)
+        u = unwrapDuckduckgoRedirect(u)
+        u = unwrapBingRedirect(u)
+        u = unwrapGoogleRedirect(u)
+        return stripDuckduckgoTracking(u)
+    }
+
+    private fun unwrapBingRedirect(url: String): String {
+        return try {
+            val p = URL(url)
+            if ("bing.com" in p.host && p.path.startsWith("/ck/a")) {
+                val u = queryParam(p.query, "u") ?: return url
+                val real = decodeBingTarget(u)
+                if (real.startsWith("http")) real else url
+            } else {
+                url
+            }
+        } catch (_: Exception) {
+            url
+        }
+    }
+
+    private fun decodeBingTarget(u: String): String {
+        val candidates = mutableListOf(u)
+        if ('%' in u) {
+            try {
+                candidates.add(URLDecoder.decode(u, "UTF-8"))
+            } catch (_: Exception) {
+            }
+        }
+        for (c in candidates) {
+            val b64 = if (c.startsWith("a1")) c.substring(2) else c
+            try {
+                val s = String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), Charsets.UTF_8)
+                if (s.startsWith("http")) return s
+            } catch (_: Exception) {
+            }
+        }
+        return ""
+    }
+
+    private fun unwrapGoogleRedirect(url: String): String {
+        return try {
+            val p = URL(url)
+            if (p.host == "www.google.com" && p.path.startsWith("/url")) {
+                val q = queryParam(p.query, "q") ?: return url
+                val real = URLDecoder.decode(q, "UTF-8")
+                if (real.startsWith("http")) real else url
+            } else {
+                url
+            }
+        } catch (_: Exception) {
+            url
+        }
+    }
 
     private fun queryParam(query: String?, key: String): String? {
         if (query.isNullOrBlank()) return null
