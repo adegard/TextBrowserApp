@@ -1,0 +1,11 @@
+gradle.projectsEvaluated {
+    rootProject.allprojects.each { p ->
+        p.tasks.matching { it.name == "compileDebugKotlin" }.configureEach { t ->
+            t.doFirst {
+                println "COMPILE_CLASSPATH_BEGIN"
+                t.classpath.files.each { f -> println f.absolutePath }
+                println "COMPILE_CLASSPATH_END"
+            }
+        }
+    }
+}

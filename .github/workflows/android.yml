@@ -39,15 +39,9 @@ jobs:
           find . -type d -name kotlin -path "*build*" -exec rm -rf {} + 2>/dev/null || true
           echo "caches wiped"
 
-      - name: Build Debug APK
-        run: gradle :app:assembleDebug
-
-      - name: Dump Kotlin compiler args (post-build)
-        if: always()
+      - name: Build Debug APK (dump compile classpath)
         run: |
-          echo "=== kotlin args ==="
-          find . -name "*.args" -o -name "kotlin-args*" 2>/dev/null | head
-          find . -path "*compileDebugKotlin*" -type f 2>/dev/null | head -20
+          gradle -I .github/init-print-classpath.gradle :app:assembleDebug 2>&1 | grep -E "COMPILE_CLASSPATH|\.jar|\.aar" | head -120 || true
 
       - name: Show Kotlin compiler errors
         if: failure()
