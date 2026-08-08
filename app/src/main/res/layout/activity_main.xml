@@ -28,6 +28,15 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Go" />
+
+        <ImageButton
+            android:id="@+id/menuButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:contentDescription="Menu"
+            android:padding="8dp"
+            android:src="@android:drawable/ic_menu_more"
+            android:background="?android:attr/selectableItemBackgroundBorderless" />
     </LinearLayout>
 
     <TextView
