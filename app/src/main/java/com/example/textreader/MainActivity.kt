@@ -64,11 +64,13 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 override fun onFling(
-                    e1: MotionEvent,
+                    e1: MotionEvent?,
                     e2: MotionEvent,
                     velocityX: Float,
                     velocityY: Float
                 ): Boolean {
+                    if (e1 == null) return false
+
                     val dx = e2.x - e1.x
                     val threshold = 80
 
