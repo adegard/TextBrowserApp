@@ -1389,27 +1389,31 @@ class MainActivity : AppCompatActivity() {
     // ========= SETTINGS =========
 
     private fun showSettingsDialog() {
-        val items = arrayOf(
-            "Search engine: ${engineNames[searchEngine]}",
-            "Results per page: $resultsPerPage",
-            "Paragraphs per page: $parasPerPage",
-            "Max chars per block: $maxChars",
-            "Groq API key: ${if (groqKey.isBlank()) "NOT SET" else "SET"}",
-            "Chronology length: $chronologyLength",
-            "Text size: ${textSize.toInt()}sp",
-            "Show page title: ${if (showTitle) "on" else "off"}",
-            "Show page number: ${if (showPageNumber) "on" else "off"}",
-            "Show compact URL: ${if (showCompactUrl) "on" else "off"}",
-            "Voice: ${ttsModeLabel()}",
-            "Voice language: ${langDisplay()}",
-            "Voice speed: ${speedLabel()}",
-            "Export data (settings + bookmarks + history)",
-            "Import data from backup"
-        )
+        val items = mutableListOf<String>()
+        val actions = mutableListOf<Int>()
+        fun add(label: String, action: Int) {
+            items.add(label)
+            actions.add(action)
+        }
+        add("Search engine: ${engineNames[searchEngine]}", 0)
+        add("Results per page: $resultsPerPage", 1)
+        add("Paragraphs per page: $parasPerPage", 2)
+        add("Max chars per block: $maxChars", 3)
+        add("Groq API key: ${if (groqKey.isBlank()) "NOT SET" else "SET"}", 4)
+        add("Chronology length: $chronologyLength", 5)
+        add("Text size: ${textSize.toInt()}sp", 6)
+        add("Show page title: ${if (showTitle) "on" else "off"}", 7)
+        add("Show page number: ${if (showPageNumber) "on" else "off"}", 8)
+        add("Show compact URL: ${if (showCompactUrl) "on" else "off"}", 9)
+        add("Voice: ${ttsModeLabel()}", 10)
+        add("Voice language: ${langDisplay()}", 11)
+        add("Voice speed: ${speedLabel()}", 12)
+        add("Export data (settings + bookmarks + history)", 13)
+        add("Import data from backup", 14)
         AlertDialog.Builder(this)
             .setTitle("Settings")
-            .setItems(items) { _, which ->
-                when (which) {
+            .setItems(items.toTypedArray()) { _, which ->
+                when (actions[which]) {
                     0 -> pickEngine()
                     1 -> askInt("Results per page", resultsPerPage, 5, 100) { resultsPerPage = it }
                     2 -> askInt("Paragraphs per page", parasPerPage, 1, 20) { parasPerPage = it }
@@ -1436,9 +1440,10 @@ class MainActivity : AppCompatActivity() {
                         renderBlock()
                     }
                     10 -> pickTtsMode()
-                    11 -> pickTtsSpeed()
-                    12 -> exportData()
-                    13 -> importData()
+                    11 -> toast("Language is auto-detected from the TTS engine")
+                    12 -> pickTtsSpeed()
+                    13 -> exportData()
+                    14 -> importData()
                 }
             }
             .setNegativeButton("Close", null)
