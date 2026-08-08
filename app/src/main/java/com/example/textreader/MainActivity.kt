@@ -59,18 +59,16 @@ class MainActivity : AppCompatActivity() {
             this,
             object : GestureDetector.SimpleOnGestureListener() {
 
-                override fun onDown(e: MotionEvent?): Boolean {
+                override fun onDown(e: MotionEvent): Boolean {
                     return true
                 }
 
                 override fun onFling(
-                    e1: MotionEvent?,
-                    e2: MotionEvent?,
+                    e1: MotionEvent,
+                    e2: MotionEvent,
                     velocityX: Float,
                     velocityY: Float
                 ): Boolean {
-                    if (e1 == null || e2 == null) return false
-
                     val dx = e2.x - e1.x
                     val threshold = 80
 
