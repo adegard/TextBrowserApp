@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.content.res.ColorStateList
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType
@@ -98,7 +99,8 @@ class MainActivity : AppCompatActivity() {
 
     private val themeNames = listOf("Day", "Night", "OLED black")
     private val defaultButtonBg = HashMap<Int, Drawable>()
-    private val defaultButtonText = HashMap<Int, android.content.res.ColorStateList>()
+    private val defaultButtonText = HashMap<Int, ColorStateList>()
+    private val defaultButtonTint = HashMap<Int, ColorStateList?>()
 
     private var searchEngine = "duck_lite"
     private var resultsPerPage = 10
@@ -125,6 +127,7 @@ class MainActivity : AppCompatActivity() {
     private var ttsOnline = false
     private var ttsAvailable: Set<Locale> = emptySet()
     private var mediaPlayer: MediaPlayer? = null
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
     private var onlineSentences: List<SentenceRange> = emptyList()
     private var onlineSentenceIndex = 0
     private var onlineFailures = 0
@@ -478,6 +481,7 @@ class MainActivity : AppCompatActivity() {
         }
         ttsActive = true
         ttsButton.text = "TTS ■"
+        acquireTtsWakeLock()
         if (useLocal) {
             ttsOnline = false
             speakBlock(currentBlockIndex)
@@ -498,6 +502,26 @@ class MainActivity : AppCompatActivity() {
         onlineFailures = 0
         clearTtsHighlight()
         ttsButton.text = "TTS"
+        releaseTtsWakeLock()
+    }
+
+    private fun acquireTtsWakeLock() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (wakeLock == null) {
+                wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "TextReader:TTS")
+                wakeLock?.setReferenceCounted(false)
+            }
+            wakeLock?.acquire()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun releaseTtsWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (_: Exception) {
+        }
     }
 
     private fun stopPlayback() {
@@ -2068,6 +2092,7 @@ class MainActivity : AppCompatActivity() {
             if (!defaultButtonBg.containsKey(b.id)) {
                 defaultButtonBg[b.id] = b.background
                 defaultButtonText[b.id] = b.textColors
+                defaultButtonTint[b.id] = b.backgroundTintList
             }
             if (themeMode == 2) {
                 val d = GradientDrawable()
@@ -2076,9 +2101,11 @@ class MainActivity : AppCompatActivity() {
                 d.setStroke(dp(1), getColor(R.color.oledBorder))
                 d.cornerRadius = dp(4).toFloat()
                 b.background = d
+                b.backgroundTintList = ColorStateList.valueOf(getColor(R.color.oledBackground))
                 b.setTextColor(getColor(R.color.oledText))
             } else {
                 b.background = defaultButtonBg[b.id]
+                b.backgroundTintList = defaultButtonTint[b.id]
                 defaultButtonText[b.id]?.let { b.setTextColor(it) }
             }
         }
@@ -2204,6 +2231,7 @@ class MainActivity : AppCompatActivity() {
         tts?.shutdown()
         mediaPlayer?.release()
         mediaPlayer = null
+        releaseTtsWakeLock()
         super.onDestroy()
     }
 
